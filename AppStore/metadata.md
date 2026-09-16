@@ -30,7 +30,7 @@ Features:
 - Generate abstract looping wallpaper videos locally
 - Preview, export, and reuse generated wallpapers
 - Works across multiple displays
-- Change the video from the menu bar
+- Change the video in General settings opened from the menu bar
 - Remember the selected wallpaper between launches
 - Start automatically when you log in
 - Mute wallpaper playback by default
@@ -60,7 +60,7 @@ RioVideoWallpaperは、ローカル動画または生成動画をmacOSのデス�
 - 抽象的なループ壁紙動画をローカル生成
 - 生成壁紙のプレビュー、書き出し、再利用
 - 複数ディスプレイに対応
-- メニューバーから動画を変更
+- メニューバーから一般設定を開いて動画を変更
 - 選択した壁紙を記憶
 - ログイン時に自動起動
 - 壁紙動画の音声はミュート
@@ -76,7 +76,7 @@ RioVideoWallpaperは選択された動画と生成壁紙をMac内で処理し、
 - Third-party advertising or analytics SDKs: None
 - Local file access: user-selected video/project files only
 - Generated wallpapers: stored locally in Application Support
-- Prompt handling: local deterministic interpretation only in the current build
+- Generation controls: renderer, seed, and visual parameters; no prompt entry or language-model requests in the current UI
 - Network behavior: no prompt text, file paths, diagnostics, analytics, or usage events are sent over the network in the current build
 - Review recording note: account, purchase, UGC moderation, and sensitive-permission flows are not applicable because the app does not include those features
 - Privacy policy draft: `docs/privacy-policy.md`

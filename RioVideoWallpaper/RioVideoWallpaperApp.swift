@@ -60,6 +60,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var accessedVideoResources: [URL: Bool] = [:]
     private var screensAreSleeping = false
     private var playbackSuspensionWorkItem: DispatchWorkItem?
+    private var playbackVisibilityTimer: Timer?
+    private var reportedUnavailableURLs: Set<URL> = []
     private var diagnosticsTask: Task<Void, Never>?
     private var uiTestingWindow: NSWindow?
     private var generativeEditorWindow: NSWindow?
@@ -71,6 +73,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if !isUITesting, ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return
+        }
         if isUITesting {
             NSApp.setActivationPolicy(.regular)
             showUITestingWindow()
@@ -96,6 +101,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         playbackSuspensionWorkItem?.cancel()
+        playbackVisibilityTimer?.invalidate()
         diagnosticsTask?.cancel()
         stopAccessingSavedVideo()
         NotificationCenter.default.removeObserver(self)
@@ -103,29 +109,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func launchVideoWindow() {
-        // 動画URLの取得およびキャンセル時のハンドリング
-        let assignments: StoredDisplayWallpaperAssignments
-        let shouldShowDiagnosticsWarning: Bool
-        if let savedAssignments = restoreSavedDisplayAssignments() {
-            assignments = savedAssignments
-            shouldShowDiagnosticsWarning = false
-        } else if isUITesting {
+        if isUITesting {
             os_log("UIテスト中のため動画選択ダイアログをスキップします")
             return
-        } else if let chosen = promptForVideo() {
-            guard let chosenAssignments = saveVideoSelection(chosen) else { return }
-            assignments = chosenAssignments
-            shouldShowDiagnosticsWarning = true
-        } else {
-            os_log("動画ファイルの選択がキャンセルされました")
-            showAlert(message: AppLocalization.string("No video file was selected. The app will quit."))
-            NSApp.terminate(nil)
+        }
+        guard let assignments = currentDisplayAssignments() else {
+            DispatchQueue.main.async { [weak self] in
+                self?.openGenerativeEditor()
+            }
             return
         }
-        // VideoWindowController の生成と動画再生開始
-        videoWindowController = VideoWindowController(assignment: assignments.videoAssignment)
-        videoWindowController?.showWindows()
-        inspectVideoForEfficiency(assignments.defaultSelection.url, showsWarnings: shouldShowDiagnosticsWarning)
+        updatePlayback(with: assignments, inspectedURL: assignments.defaultSelection.url, showsWarnings: false)
     }
 
     func openGenerativeEditor() {
@@ -181,41 +175,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             os_log("動画変更ダイアログがキャンセルされました")
             return
         }
-        // コントローラ未初期化時のハンドリング
-        guard let controller = videoWindowController else {
-            os_log("VideoWindowController が未初期化のため URL 更新できません")
-            showAlert(message: AppLocalization.string("The video window has not been initialized yet."))
-            return
-        }
         guard let assignments = saveVideoSelection(newURL) else { return }
-        controller.updateAssignment(assignments.videoAssignment)
-        inspectVideoForEfficiency(newURL, showsWarnings: true)
+        updatePlayback(with: assignments, inspectedURL: newURL, showsWarnings: true)
     }
 
     func setGeneratedWallpaper(_ url: URL) {
         guard let assignments = saveVideoSelection(url) else { return }
 
-        if let controller = videoWindowController {
-            controller.updateAssignment(assignments.videoAssignment)
-        } else {
-            videoWindowController = VideoWindowController(assignment: assignments.videoAssignment)
-            videoWindowController?.showWindows()
-        }
-
-        inspectVideoForEfficiency(url, showsWarnings: false)
+        updatePlayback(with: assignments, inspectedURL: url, showsWarnings: false)
     }
 
     func setGeneratedWallpaperForDisplay(_ url: URL) {
         guard let assignments = assignVideo(url, promptsForDisplay: true) else {
             return
         }
-        if let controller = videoWindowController {
-            controller.updateAssignment(assignments.videoAssignment)
-        } else {
-            videoWindowController = VideoWindowController(assignment: assignments.videoAssignment)
-            videoWindowController?.showWindows()
-        }
-        inspectVideoForEfficiency(url, showsWarnings: false)
+        updatePlayback(with: assignments, inspectedURL: url, showsWarnings: false)
     }
 
     func changeVideoForDisplay() {
@@ -232,8 +206,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         guard let assignments = assignVideo(newURL, to: selectedScreen) else { return }
-        videoWindowController?.updateAssignment(assignments.videoAssignment)
-        inspectVideoForEfficiency(newURL, showsWarnings: true)
+        updatePlayback(with: assignments, inspectedURL: newURL, showsWarnings: true)
     }
 
     func resetDisplayAssignments() {
@@ -248,7 +221,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard persistDisplayAssignments(assignments) else {
             return
         }
-        videoWindowController?.updateAssignment(assignments.videoAssignment)
+        updatePlayback(with: assignments, inspectedURL: assignments.defaultSelection.url, showsWarnings: false)
     }
 
     func settingsDisplayAssignments() -> StoredDisplayWallpaperAssignments? {
@@ -263,8 +236,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard persistDisplayAssignments(assignments) else {
             return
         }
-        videoWindowController?.updateAssignment(assignments.videoAssignment)
-        inspectVideoForEfficiency(assignments.defaultSelection.url, showsWarnings: false)
+        updatePlayback(with: assignments, inspectedURL: assignments.defaultSelection.url, showsWarnings: false)
     }
 
     func settingsUseSeparateVideosOnConnectedDisplays() {
@@ -279,10 +251,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let connectedDisplayIDs = Set(screens.map(DisplayIdentifier.id(for:)))
-        assignments.perDisplaySelections = assignments.perDisplaySelections.filter { displayID, _ in
-            connectedDisplayIDs.contains(displayID)
-        }
-
         for displayID in connectedDisplayIDs where assignments.perDisplaySelections[displayID] == nil {
             assignments.perDisplaySelections[displayID] = assignments.defaultSelection
         }
@@ -291,8 +259,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        videoWindowController?.updateAssignment(assignments.videoAssignment)
-        inspectVideoForEfficiency(assignments.defaultSelection.url, showsWarnings: false)
+        updatePlayback(with: assignments, inspectedURL: assignments.defaultSelection.url, showsWarnings: false)
     }
 
     func settingsChooseDefaultVideo() {
@@ -362,13 +329,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func assignVideo(_ url: URL, toDisplayID displayID: String) -> StoredDisplayWallpaperAssignments? {
-        guard var assignments = currentDisplayAssignments() else {
-            showAlert(message: AppLocalization.string("Choose a video for all displays first."))
-            return nil
-        }
         guard let selection = makeStoredSelection(for: url) else {
             return nil
         }
+        var assignments = currentDisplayAssignments() ?? StoredDisplayWallpaperAssignments(
+            defaultSelection: selection, perDisplaySelections: [:]
+        )
 
         assignments.perDisplaySelections[displayID] = selection
         guard persistDisplayAssignments(assignments) else {
@@ -382,62 +348,69 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         inspectedURL: URL,
         showsWarnings: Bool
     ) {
+        let restored = DisplayWallpaperRestoration.restore(
+            assignments,
+            connectedDisplayIDs: Set(NSScreen.screens.map(DisplayIdentifier.id(for:))),
+            resolve: resolvedSelection,
+            isAccessible: startAccessingVideo
+        )
+        defer {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                do {
+                    let saved = try self.displayAssignmentStore.loadChecked()
+                    let retained = Set(saved?.allSelections().map(\.url) ?? [])
+                    for url in Set(self.accessedVideoResources.keys).subtracting(retained) {
+                        self.stopAccessingVideo(url)
+                    }
+                } catch {
+                    os_log("アクセス権の解放前に割り当てを確認できませんでした: %{public}@", error.localizedDescription)
+                }
+            }
+        }
+        if restored.storedAssignments != assignments {
+            do {
+                try displayAssignmentStore.save(restored.storedAssignments)
+            } catch {
+                os_log("復元した割り当ての保存に失敗: %{public}@", error.localizedDescription)
+                showAlert(message: AppLocalization.string("Failed to save video assignments."))
+            }
+        }
+        let newlyUnavailable = restored.unavailableURLs.subtracting(reportedUnavailableURLs)
+        reportedUnavailableURLs = restored.unavailableURLs
+        if !newlyUnavailable.isEmpty {
+            showAlert(message: AppLocalization.string("Some saved videos are unavailable. Their assignments have been kept. Reconnect the storage or choose another video in Settings."))
+        }
+        guard let playable = restored.playbackAssignment else {
+            videoWindowController = nil
+            return
+        }
         if let controller = videoWindowController {
-            controller.updateAssignment(assignments.videoAssignment)
+            controller.updateAssignment(playable)
         } else {
-            videoWindowController = VideoWindowController(assignment: assignments.videoAssignment)
+            videoWindowController = VideoWindowController(assignment: playable)
             videoWindowController?.showWindows()
         }
+        schedulePlaybackSuspensionUpdate()
         inspectVideoForEfficiency(inspectedURL, showsWarnings: showsWarnings)
     }
 
     private func currentDisplayAssignments() -> StoredDisplayWallpaperAssignments? {
-        restoreSavedDisplayAssignments() ?? {
-            guard let url = restoreSavedVideoURL(),
-                  let selection = makeStoredSelection(for: url) else {
-                return nil
+        do {
+            return try displayAssignmentStore.loadOrMigrate {
+                guard let url = self.restoreSavedVideoURL() else { return nil }
+                return self.makeStoredSelection(for: url)
             }
-            let assignments = StoredDisplayWallpaperAssignments(
-                defaultSelection: selection,
-                perDisplaySelections: [:]
-            )
-            _ = persistDisplayAssignments(assignments)
-            return assignments
-        }()
-    }
-
-    private func restoreSavedDisplayAssignments() -> StoredDisplayWallpaperAssignments? {
-        guard var assignments = displayAssignmentStore.load() else {
+        } catch {
+            os_log("保存済み割り当ての読み込みに失敗: %{public}@", error.localizedDescription)
+            showAlert(message: AppLocalization.string("Saved video assignments could not be read. They have not been replaced."))
             return nil
         }
-        var didResolveStaleBookmark = false
-
-        guard let defaultSelection = resolvedSelection(assignments.defaultSelection, didResolveStaleBookmark: &didResolveStaleBookmark) else {
-            return nil
-        }
-        assignments.defaultSelection = defaultSelection
-
-        for (displayID, selection) in assignments.perDisplaySelections {
-            guard let resolved = resolvedSelection(selection, didResolveStaleBookmark: &didResolveStaleBookmark) else {
-                assignments.perDisplaySelections.removeValue(forKey: displayID)
-                didResolveStaleBookmark = true
-                continue
-            }
-            assignments.perDisplaySelections[displayID] = resolved
-        }
-
-        guard startAccessingVideoSelections(assignments.allSelections()) else {
-            return nil
-        }
-
-        if didResolveStaleBookmark {
-            _ = persistDisplayAssignments(assignments)
-        }
-        return assignments
     }
 
     private func restoreSavedVideoURL() -> URL? {
         if let savedURL = UserDefaults.standard.url(forKey: favoriteVideoKey),
+           UserDefaults.standard.data(forKey: favoriteVideoBookmarkKey) == nil,
            generatedAssetLibrary.containsGeneratedVideo(savedURL) {
             guard startAccessingVideo(savedURL) else {
                 return nil
@@ -487,8 +460,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeStoredSelection(for url: URL) -> StoredWallpaperSelection? {
+        guard startAccessingVideo(url) else {
+            showAlert(message: AppLocalization.string("The selected video file could not be accessed. Choose another video."))
+            return nil
+        }
         let isGenerated = generatedAssetLibrary.containsGeneratedVideo(url)
-        if isGenerated {
+        let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let isInApplicationSupport = applicationSupport.map {
+            url.resolvingSymlinksInPath().path.hasPrefix($0.resolvingSymlinksInPath().path + "/")
+        } ?? false
+        if isGenerated && isInApplicationSupport {
             return StoredWallpaperSelection(url: url, bookmarkData: nil, isGenerated: true)
         }
 
@@ -498,7 +479,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
-            return StoredWallpaperSelection(url: url, bookmarkData: bookmarkData, isGenerated: false)
+            return StoredWallpaperSelection(url: url, bookmarkData: bookmarkData, isGenerated: isGenerated)
         } catch {
             os_log("動画ブックマークの保存に失敗: %{public}@", String(describing: error))
             showAlert(message: AppLocalization.string("Failed to save the selected video file. Choose another video."))
@@ -507,11 +488,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func persistDisplayAssignments(_ assignments: StoredDisplayWallpaperAssignments) -> Bool {
-        guard startAccessingVideoSelections(assignments.allSelections()) else {
-            showAlert(message: AppLocalization.string("The selected video file could not be accessed. Choose another video."))
-            return false
-        }
-
         do {
             try displayAssignmentStore.save(assignments)
         } catch {
@@ -522,21 +498,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let defaultURL = assignments.defaultSelection.url
         UserDefaults.standard.set(defaultURL, forKey: favoriteVideoKey)
-        if assignments.defaultSelection.isGenerated {
-            UserDefaults.standard.removeObject(forKey: favoriteVideoBookmarkKey)
-        } else if let bookmarkData = assignments.defaultSelection.bookmarkData {
+        if let bookmarkData = assignments.defaultSelection.bookmarkData {
             UserDefaults.standard.set(bookmarkData, forKey: favoriteVideoBookmarkKey)
+        } else if assignments.defaultSelection.isGenerated {
+            UserDefaults.standard.removeObject(forKey: favoriteVideoBookmarkKey)
         } else {
             persistBookmark(for: defaultURL)
         }
         return true
     }
 
-    private func resolvedSelection(
-        _ selection: StoredWallpaperSelection,
-        didResolveStaleBookmark: inout Bool
-    ) -> StoredWallpaperSelection? {
-        guard let bookmarkData = selection.bookmarkData, !selection.isGenerated else {
+    private func resolvedSelection(_ selection: StoredWallpaperSelection) -> StoredWallpaperSelection? {
+        guard let bookmarkData = selection.bookmarkData else {
             return selection
         }
 
@@ -548,12 +521,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
             )
+            guard startAccessingVideo(url) else { return nil }
 
             guard isStale else {
-                return StoredWallpaperSelection(url: url, bookmarkData: bookmarkData, isGenerated: false)
+                return StoredWallpaperSelection(url: url, bookmarkData: bookmarkData, isGenerated: selection.isGenerated)
             }
 
-            didResolveStaleBookmark = true
             return makeStoredSelection(for: url)
         } catch {
             os_log("保存済み動画ブックマークの復元に失敗: %{public}@", String(describing: error))
@@ -576,40 +549,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startAccessingVideo(_ url: URL) -> Bool {
         if accessedVideoResources[url] != nil {
-            return true
+            if FileManager.default.isReadableFile(atPath: url.path) {
+                return true
+            }
+            stopAccessingVideo(url)
         }
 
         let started = url.startAccessingSecurityScopedResource()
-        guard started || FileManager.default.isReadableFile(atPath: url.path) else {
+        guard FileManager.default.isReadableFile(atPath: url.path) else {
+            if started { url.stopAccessingSecurityScopedResource() }
             os_log("動画ファイルへのアクセス権がありません: %@", url.path)
             return false
         }
 
         accessedVideoResources[url] = started
-        return true
-    }
-
-    private func startAccessingVideoSelections(_ selections: [StoredWallpaperSelection]) -> Bool {
-        let uniqueURLs = Set(selections.map(\.url))
-        var newlyAccessedURLs: [URL] = []
-
-        for url in uniqueURLs {
-            if accessedVideoResources[url] != nil {
-                continue
-            }
-            guard startAccessingVideo(url) else {
-                for accessedURL in newlyAccessedURLs {
-                    stopAccessingVideo(accessedURL)
-                }
-                return false
-            }
-            newlyAccessedURLs.append(url)
-        }
-
-        let staleURLs = Set(accessedVideoResources.keys).subtracting(uniqueURLs)
-        for staleURL in staleURLs {
-            stopAccessingVideo(staleURL)
-        }
         return true
     }
 
@@ -652,19 +605,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleScreenConfigurationChange(_ n: Notification) {
+        guard !isUITesting else { return }
         os_log("画面構成変更を受信、最新の動画を再読み込みします")
-        guard let assignments = restoreSavedDisplayAssignments() ?? currentDisplayAssignments() else {
+        guard let assignments = currentDisplayAssignments() else {
             os_log("保存された動画割り当てが見つかりません")
             return
         }
-        if let controller = videoWindowController {
-            controller.updateAssignment(assignments.videoAssignment)
-        } else {
-            videoWindowController = VideoWindowController(assignment: assignments.videoAssignment)
-            videoWindowController?.showWindows()
-        }
-        schedulePlaybackSuspensionUpdate()
-        inspectVideoForEfficiency(assignments.defaultSelection.url, showsWarnings: false)
+        updatePlayback(with: assignments, inspectedURL: assignments.defaultSelection.url, showsWarnings: false)
     }
 
     private func showUITestingWindow() {
@@ -707,6 +654,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSWorkspace.didActivateApplicationNotification,
             object: nil
         )
+        for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] {
+            workspaceCenter.addObserver(
+                self, selector: #selector(handleStorageChange(_:)), name: name, object: nil
+            )
+        }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self, !self.screensAreSleeping else { return }
+            self.updatePlaybackSuspension()
+        }
+        timer.tolerance = 0.25
+        RunLoop.main.add(timer, forMode: .common)
+        playbackVisibilityTimer = timer
+    }
+
+    @objc private func handleStorageChange(_ notification: Notification) {
+        guard !isUITesting, let assignments = currentDisplayAssignments() else { return }
+        updatePlayback(with: assignments, inspectedURL: assignments.defaultSelection.url, showsWarnings: false)
     }
 
     @objc private func handleScreensDidSleep(_ notification: Notification) {
@@ -733,14 +697,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updatePlaybackSuspension() {
-        let shouldSuspend = PlaybackSuspensionPolicy.shouldSuspend(
-            screensAreSleeping: screensAreSleeping,
+        let coveredDisplayIDs = PlaybackSuspensionPolicy.coveredDisplayIDs(
             frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
             currentPID: ProcessInfo.processInfo.processIdentifier,
-            windows: currentWindowSnapshots(),
+            windows: screensAreSleeping ? [] : currentWindowSnapshots(),
             screens: currentScreenSnapshots()
         )
-        videoWindowController?.setPlaybackSuspended(shouldSuspend)
+        videoWindowController?.setPlaybackVisibility(
+            screensAreSleeping: screensAreSleeping,
+            coveredDisplayIDs: coveredDisplayIDs
+        )
     }
 
     private func currentWindowSnapshots() -> [PlaybackSuspensionPolicy.WindowSnapshot] {
@@ -755,6 +721,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let ownerPID = (windowInfo[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
                   let layer = (windowInfo[kCGWindowLayer as String] as? NSNumber)?.intValue,
                   let bounds = windowInfo[kCGWindowBounds as String] as? [String: Any],
+                  let x = (bounds["X"] as? NSNumber)?.doubleValue,
+                  let y = (bounds["Y"] as? NSNumber)?.doubleValue,
                   let width = (bounds["Width"] as? NSNumber)?.doubleValue,
                   let height = (bounds["Height"] as? NSNumber)?.doubleValue else {
                 return nil
@@ -764,16 +732,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 ownerPID: ownerPID,
                 layer: layer,
                 width: width,
-                height: height
+                height: height,
+                x: x,
+                y: y,
+                alpha: (windowInfo[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
             )
         }
     }
 
     private func currentScreenSnapshots() -> [PlaybackSuspensionPolicy.ScreenSnapshot] {
-        NSScreen.screens.map { screen in
-            PlaybackSuspensionPolicy.ScreenSnapshot(
-                width: Double(screen.frame.width),
-                height: Double(screen.frame.height)
+        NSScreen.screens.compactMap { screen in
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+                os_log("ディスプレイの座標を取得できませんでした")
+                return nil
+            }
+            let bounds = CGDisplayBounds(number.uint32Value)
+            return PlaybackSuspensionPolicy.ScreenSnapshot(
+                width: bounds.width,
+                height: bounds.height,
+                x: bounds.minX,
+                y: bounds.minY,
+                displayID: DisplayIdentifier.id(for: screen)
             )
         }
     }

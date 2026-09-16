@@ -924,8 +924,8 @@ enum RendererRegistry {
                     "kaleidoscopic symmetry"
                 ],
                 loopContract: LoopContract(
-                    isExactlyPeriodic: true,
-                    phaseModel: "All visible motion is derived from normalized loop phase using sin/cos cycles.",
+                    isExactlyPeriodic: false,
+                    phaseModel: "Point geometry uses integer temporal harmonics. Trail accumulation approaches a periodic steady state after warmup; finite warmup is not exact.",
                     durationRule: "Loop duration controls cycle length; higher speed increases apparent phase velocity without requiring non-periodic state.",
                     cautions: [
                         "Very long trails can make the seam more visible unless fadeAlpha is high enough.",
@@ -967,8 +967,8 @@ enum RendererRegistry {
                     "cyclic satellites"
                 ],
                 loopContract: LoopContract(
-                    isExactlyPeriodic: true,
-                    phaseModel: "Object positions use rational harmonic sine/cosine paths over one normalized loop.",
+                    isExactlyPeriodic: false,
+                    phaseModel: "Object positions use integer temporal harmonics. Trail accumulation approaches a periodic steady state after warmup; finite warmup is not exact.",
                     durationRule: "Loop seconds are a playback period for one complete orbital cycle; speed changes orbital phase multipliers within that period.",
                     cautions: [
                         "High eccentricity makes paths feel less calm.",
@@ -1993,7 +1993,7 @@ enum RendererRegistry {
             patternVocabulary: vocabulary,
             loopContract: LoopContract(
                 isExactlyPeriodic: true,
-                phaseModel: "All visible coordinates, color phases, scale changes, and rotations are deterministic functions of sin/cos over normalized loop phase with integer harmonic parameters.",
+                phaseModel: "Visible coordinates and colors use integer temporal harmonics, closed phase modulation, periodic lifetimes, or a deterministic finite simulation cycle. Spatial coefficients need not be integers.",
                 durationRule: "Loop seconds represent one complete normalized phase cycle. Speed selects an integer cycle multiplier before rendering.",
                 cautions: [
                     "High element counts and high sample counts increase CPU vertex generation cost.",

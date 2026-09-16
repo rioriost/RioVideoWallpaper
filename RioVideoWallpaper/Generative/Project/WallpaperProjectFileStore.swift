@@ -19,7 +19,15 @@ enum WallpaperProjectFileStore {
     static func decode(_ data: Data) throws -> WallpaperProject {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(WallpaperProject.self, from: data)
+        let project = try decoder.decode(WallpaperProject.self, from: data)
+        guard project.schemaVersion == 1 else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: [],
+                debugDescription: "Unsupported wallpaper project schema version \(project.schemaVersion)."
+            ))
+        }
+        _ = try project.exportSettings.validatedForExport()
+        return project
     }
 
     static func save(_ project: WallpaperProject, to url: URL) throws {

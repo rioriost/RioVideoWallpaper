@@ -14,20 +14,21 @@ enum GenerativeVideoExporter {
         to outputURL: URL,
         progress: @escaping (Double) -> Void
     ) async throws -> URL {
-        let exportTask = Task.detached(priority: .userInitiated) {
-            try exportSynchronously(project: project, to: outputURL, progress: progress)
+        let settings = try project.exportSettings.validatedForExport()
+        let exportedURL = try await ExportFileTransaction.write(to: outputURL) { stagingURL in
+            let exportTask = Task.detached(priority: .userInitiated) {
+                try exportSynchronously(project: project, to: stagingURL, progress: progress)
+            }
+            _ = try await withTaskCancellationHandler {
+                try await exportTask.value
+            } onCancel: {
+                exportTask.cancel()
+            }
+            try Task.checkCancellation()
+            _ = try await ExportedVideoValidator.validate(url: stagingURL, expected: settings)
+            try Task.checkCancellation()
         }
-
-        let exportedURL = try await withTaskCancellationHandler {
-            try await exportTask.value
-        } onCancel: {
-            exportTask.cancel()
-        }
-
-        _ = try await ExportedVideoValidator.validate(
-            url: exportedURL,
-            expected: project.exportSettings.normalizedForExport()
-        )
+        progress(1.0)
         return exportedURL
     }
 
@@ -38,12 +39,8 @@ enum GenerativeVideoExporter {
     ) throws -> URL {
         try Task.checkCancellation()
 
-        let settings = project.exportSettings.normalizedForExport()
+        let settings = try project.exportSettings.validatedForExport()
         let clock = RenderClock(fps: settings.fps, loopSeconds: settings.loopSeconds)
-
-        if FileManager.default.fileExists(atPath: outputURL.path) {
-            try FileManager.default.removeItem(at: outputURL)
-        }
 
         guard let device = MTLCreateSystemDefaultDevice(),
               let commandQueue = device.makeCommandQueue() else {
@@ -51,8 +48,13 @@ enum GenerativeVideoExporter {
         }
 
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings.videoOutputSettings)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: try settings.videoOutputSettings)
         input.expectsMediaDataInRealTime = false
+        defer {
+            if writer.status == .writing || writer.status == .unknown {
+                writer.cancelWriting()
+            }
+        }
 
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
@@ -79,86 +81,41 @@ enum GenerativeVideoExporter {
             throw ExportError.textureCacheCreationFailed(cacheStatus)
         }
 
-        let renderer = try GenerativeFrameRenderer(device: device, colorPixelFormat: .bgra8Unorm)
-        renderer.resetAccumulation()
+        let renderer = try GenerativeRenderSession(device: device)
 
         let drawableSize = CGSize(width: settings.width, height: settings.height)
-        let warmupFrames = Array(clock.warmupFrameIndices(warmupLoops: settings.warmupLoops))
-        let exportFrames = Array(clock.exportFrameIndices())
-        let totalWork = max(1, warmupFrames.count + exportFrames.count)
+        let accumulates = project.renderParameters.rendererFamily == .fieldLines ||
+            project.renderParameters.rendererFamily == .orbital
+        let warmupCount = accumulates ? clock.warmupFrameIndices(warmupLoops: settings.warmupLoops).count : 0
+        let totalWork = max(1, warmupCount + clock.totalFrames)
         var completedWork = 0
 
-        do {
-            for frameIndex in warmupFrames {
-                try Task.checkCancellation()
-                _ = try autoreleasepool {
-                    try renderFrame(
-                        parameters: project.renderParameters,
-                        seed: project.seed,
-                        frameIndex: frameIndex,
-                        clock: clock,
-                        drawableSize: drawableSize,
-                        pixelBufferPool: pixelBufferPool,
-                        textureCache: textureCache,
-                        renderer: renderer,
-                        commandQueue: commandQueue
-                    )
+        for frameIndex in clock.exportFrameIndices() {
+            try ExportWriterWait.untilReady(writer: writer, isReady: { input.isReadyForMoreMediaData })
+            let pixelBuffer = try autoreleasepool {
+                try renderFrame(
+                    parameters: project.renderParameters, seed: project.seed, frameIndex: frameIndex,
+                    settings: settings, drawableSize: drawableSize,
+                    pixelBufferPool: pixelBufferPool, textureCache: textureCache,
+                    renderer: renderer, commandQueue: commandQueue
+                ) { _ in
+                    completedWork += 1
+                    progress(0.95 * Double(completedWork) / Double(totalWork))
                 }
-                completedWork += 1
-                progress(Double(completedWork) / Double(totalWork))
             }
-
-            for (outputFrameIndex, frameIndex) in exportFrames.enumerated() {
-                try Task.checkCancellation()
-                while !input.isReadyForMoreMediaData {
-                    try Task.checkCancellation()
-                    Thread.sleep(forTimeInterval: 0.01)
-                }
-
-                let pixelBuffer = try autoreleasepool {
-                    try renderFrame(
-                        parameters: project.renderParameters,
-                        seed: project.seed,
-                        frameIndex: frameIndex,
-                        clock: clock,
-                        drawableSize: drawableSize,
-                        pixelBufferPool: pixelBufferPool,
-                        textureCache: textureCache,
-                        renderer: renderer,
-                        commandQueue: commandQueue
-                    )
-                }
-
-                let presentationTime = CMTime(value: CMTimeValue(outputFrameIndex), timescale: CMTimeScale(settings.fps))
-                guard adaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
-                    throw ExportError.appendFailed(writer.error)
-                }
-
-                completedWork += 1
-                progress(Double(completedWork) / Double(totalWork))
+            try Task.checkCancellation()
+            let presentationTime = CMTime(value: CMTimeValue(frameIndex), timescale: CMTimeScale(settings.fps))
+            guard adaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
+                throw ExportError.appendFailed(writer.error)
             }
-        } catch is CancellationError {
-            writer.cancelWriting()
-            try? FileManager.default.removeItem(at: outputURL)
-            throw CancellationError()
-        } catch {
-            writer.cancelWriting()
-            throw error
         }
 
+        try Task.checkCancellation()
+        writer.endSession(atSourceTime: CMTime(value: CMTimeValue(clock.totalFrames), timescale: CMTimeScale(settings.fps)))
         input.markAsFinished()
-
-        let semaphore = DispatchSemaphore(value: 0)
-        writer.finishWriting {
-            semaphore.signal()
+        try ExportWriterWait.finish(writer: writer) { completion in
+            writer.finishWriting(completionHandler: completion)
         }
-        semaphore.wait()
-
-        if writer.status == .failed || writer.status == .cancelled {
-            throw ExportError.writerFailed(writer.error)
-        }
-
-        progress(1.0)
         return outputURL
     }
 
@@ -167,12 +124,13 @@ enum GenerativeVideoExporter {
         parameters: RenderParameters,
         seed: UInt64,
         frameIndex: Int,
-        clock: RenderClock,
+        settings: ExportSettings,
         drawableSize: CGSize,
         pixelBufferPool: CVPixelBufferPool,
         textureCache: CVMetalTextureCache,
-        renderer: GenerativeFrameRenderer,
-        commandQueue: MTLCommandQueue
+        renderer: GenerativeRenderSession,
+        commandQueue: MTLCommandQueue,
+        didRenderFrame: (Int) -> Void
     ) throws -> CVPixelBuffer {
         try Task.checkCancellation()
 
@@ -204,15 +162,19 @@ enum GenerativeVideoExporter {
             throw ExportError.commandBufferCreationFailed
         }
 
-        renderer.render(
+        let renderedTexture = try renderer.render(
             parameters: parameters,
             seed: seed,
             frameIndex: frameIndex,
-            clock: clock,
+            settings: settings,
             drawableSize: drawableSize,
-            outputTexture: texture,
-            commandBuffer: commandBuffer
+            commandQueue: commandQueue,
+            didRenderFrame: didRenderFrame
         )
+        let descriptor = MTLRenderPassDescriptor()
+        descriptor.colorAttachments[0].texture = texture
+        descriptor.colorAttachments[0].storeAction = .store
+        try renderer.present(renderedTexture, descriptor: descriptor, commandBuffer: commandBuffer)
 
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
@@ -227,15 +189,18 @@ enum GenerativeVideoExporter {
 
 private extension ExportSettings {
     var videoOutputSettings: [String: Any] {
-        [
-            AVVideoCodecKey: codec.avVideoCodecType,
-            AVVideoWidthKey: width,
-            AVVideoHeightKey: height,
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: averageBitRate,
-                AVVideoExpectedSourceFrameRateKey: fps
+        get throws {
+            return [
+                AVVideoCodecKey: codec.avVideoCodecType,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height,
+                AVVideoCompressionPropertiesKey: [
+                    AVVideoAverageBitRateKey: try estimatedBitRate(),
+                    AVVideoExpectedSourceFrameRateKey: fps,
+                    AVVideoAllowFrameReorderingKey: false
+                ]
             ]
-        ]
+        }
     }
 
     var pixelBufferAttributes: [String: Any] {
@@ -248,19 +213,6 @@ private extension ExportSettings {
         ]
     }
 
-    private var averageBitRate: Int {
-        let pixels = max(1, width * height)
-        let bitsPerPixel: Double
-        switch quality {
-        case .draft:
-            bitsPerPixel = 0.08
-        case .high:
-            bitsPerPixel = 0.16
-        case .archive:
-            bitsPerPixel = 0.28
-        }
-        return max(2_000_000, Int(Double(pixels * fps) * bitsPerPixel))
-    }
 }
 
 private extension VideoCodec {

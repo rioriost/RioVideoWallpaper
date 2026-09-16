@@ -10,6 +10,7 @@ import UniformTypeIdentifiers
 struct GenerativeEditorView: View {
     private let initialProjectURL: URL?
     private let assetLibrary: GeneratedAssetLibrary
+    private let draft: GenerativeEditorDraft
     var setWallpaper: (URL) -> Void
     var setWallpaperForDisplay: (URL) -> Void
 
@@ -20,13 +21,19 @@ struct GenerativeEditorView: View {
     @State private var exportErrorMessage: String?
     @State private var exportTask: Task<Void, Never>?
     @State private var editAutosaveTask: Task<Void, Never>?
+    @State private var thumbnailTask: Task<Void, Never>?
+    @State private var thumbnailOperationID: UUID?
+    @State private var editingState = GenerativeEditorRevisionState()
+    @State private var activeLibrary: GeneratedAssetLibrary
+    @State private var exportOperationID: UUID?
+    @State private var isVisible = false
     @State private var projectFileErrorMessage: String?
     @State private var currentProjectURL: URL?
     @State private var lastExportURL: URL?
     @State private var libraryEntries: [ProjectLibraryEntry] = []
     @State private var entryPendingDeletion: ProjectLibraryEntry?
     @State private var isPreviewPlaying = true
-    @State private var requestedPreviewFrameIndex: Int?
+    @State private var previewSeekRequest: PreviewSeekRequest?
     @State private var isSeamPreviewing = false
     @State private var seamPreviewTask: Task<Void, Never>?
     @State private var didLoadInitialProject = false
@@ -36,14 +43,20 @@ struct GenerativeEditorView: View {
     init(
         initialProjectURL: URL? = nil,
         assetLibrary: GeneratedAssetLibrary = GeneratedAssetLibrary(),
+        draft: GenerativeEditorDraft = GenerativeEditorDraft(),
         setWallpaper: @escaping (URL) -> Void = { _ in },
         setWallpaperForDisplay: @escaping (URL) -> Void = { _ in }
     ) {
         self.initialProjectURL = initialProjectURL
         self.assetLibrary = assetLibrary
+        self.draft = draft
         self.setWallpaper = setWallpaper
         self.setWallpaperForDisplay = setWallpaperForDisplay
-        _project = State(initialValue: Self.initialProjectForCurrentDisplays())
+        _activeLibrary = State(initialValue: draft.library ?? assetLibrary)
+        _project = State(initialValue: draft.project ?? Self.initialProjectForCurrentDisplays())
+        _editingState = State(initialValue: draft.revisionState)
+        _currentProjectURL = State(initialValue: draft.projectURL)
+        _projectFileErrorMessage = State(initialValue: draft.errorMessage)
     }
 
     private static func initialProjectForCurrentDisplays() -> WallpaperProject {
@@ -499,7 +512,7 @@ struct GenerativeEditorView: View {
     private var exportPresetBinding: Binding<ExportPreset> {
         Binding(
             get: {
-                ExportPreset.matching(project.exportSettings)
+                ExportPreset.matching(width: project.exportSettings.width, height: project.exportSettings.height)
             },
             set: { preset in
                 guard let settings = preset.exportSettings(preservingCodec: project.exportSettings.codec) else {
@@ -646,14 +659,24 @@ struct GenerativeEditorView: View {
         }
         .frame(minWidth: 1080, minHeight: 700)
         .navigationTitle("RioVideoWallpaper")
+        .accessibilityIdentifier("generative-editor")
         .onAppear(perform: handleAppear)
         .onReceive(NotificationCenter.default.publisher(for: GeneratedAssetLibrary.rootDidChangeNotification)) { _ in
-            currentProjectURL = nil
-            lastExportURL = nil
-            refreshLibraryEntries()
+            handleLibraryRootChange()
         }
         .onDisappear {
-            editAutosaveTask?.cancel()
+            isVisible = false
+            _ = flushPendingEdits()
+            cancelThumbnail()
+            draft.project = project
+            draft.revisionState = editingState
+            draft.library = activeLibrary
+            draft.projectURL = currentProjectURL
+            draft.errorMessage = projectFileErrorMessage
+            exportTask?.cancel()
+            exportTask = nil
+            exportOperationID = nil
+            isExporting = false
             stopSeamPreview()
         }
         .confirmationDialog(
@@ -742,16 +765,17 @@ struct GenerativeEditorView: View {
                     startLibraryExport()
                 }
                 .disabled(isExporting)
+                .accessibilityIdentifier("export-video")
 
                 Button(AppLocalization.string("Set on Display...")) {
                     guard let url = exportedWallpaperURL else { return }
-                    setWallpaperForDisplay(url)
+                    applyWallpaper(url, toSingleDisplay: true)
                 }
                 .disabled(exportedWallpaperURL == nil || isExporting)
 
                 Button(AppLocalization.string("Set to All Displays")) {
                     guard let url = exportedWallpaperURL else { return }
-                    setWallpaper(url)
+                    applyWallpaper(url, toSingleDisplay: false)
                 }
                 .disabled(exportedWallpaperURL == nil || isExporting)
             }
@@ -806,7 +830,7 @@ struct GenerativeEditorView: View {
 
                                 if let outputURL = existingOutputVideoURL(for: entry) {
                                     Button {
-                                        setWallpaper(outputURL)
+                                        applyWallpaper(outputURL, toSingleDisplay: false)
                                     } label: {
                                     Image(systemName: "display")
                                 }
@@ -814,7 +838,7 @@ struct GenerativeEditorView: View {
                                 .help(AppLocalization.string("Set as wallpaper"))
 
                                 Button {
-                                    setWallpaperForDisplay(outputURL)
+                                    applyWallpaper(outputURL, toSingleDisplay: true)
                                     } label: {
                                     Image(systemName: "rectangle.on.rectangle")
                                 }
@@ -881,7 +905,7 @@ struct GenerativeEditorView: View {
                     seed: project.seed,
                     exportSettings: project.exportSettings,
                     isPlaying: isPreviewPlaying,
-                    requestedFrameIndex: requestedPreviewFrameIndex
+                    seekRequest: previewSeekRequest
                 )
             }
             .aspectRatio(16.0 / 10.0, contentMode: .fit)
@@ -897,23 +921,25 @@ struct GenerativeEditorView: View {
                     Image(systemName: isPreviewPlaying ? "pause.fill" : "play.fill")
                 }
                 .help(isPreviewPlaying ? "Pause" : "Play")
+                .accessibilityIdentifier("preview-play-pause")
 
                 Button {
                     stopSeamPreview()
                     isPreviewPlaying = false
-                    requestedPreviewFrameIndex = 0
+                    previewSeekRequest = PreviewSeekRequest(frameIndex: 0)
                 } label: {
                     Image(systemName: "backward.end.fill")
                 }
                 .help(AppLocalization.string("First frame"))
+                .accessibilityIdentifier("preview-first-frame")
 
                 Button {
                     stopSeamPreview()
                     isPreviewPlaying = false
-                    requestedPreviewFrameIndex = max(0, RenderClock(
+                    previewSeekRequest = PreviewSeekRequest(frameIndex: max(0, RenderClock(
                         fps: project.exportSettings.fps,
                         loopSeconds: project.exportSettings.loopSeconds
-                    ).totalFrames - 1)
+                    ).totalFrames - 1))
                 } label: {
                     Image(systemName: "forward.end.fill")
                 }
@@ -975,6 +1001,7 @@ struct GenerativeEditorView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .accessibilityIdentifier("renderer-family")
 
                 HStack(spacing: 8) {
                     Text(AppLocalization.string("Seed"))
@@ -988,6 +1015,7 @@ struct GenerativeEditorView: View {
                         project.seed = UInt64.random(in: UInt64.min...UInt64.max)
                         markProjectEdited(regenerateThumbnail: true)
                     }
+                    .accessibilityIdentifier("renderer-randomize-seed")
                 }
 
                 Divider()
@@ -1455,7 +1483,7 @@ struct GenerativeEditorView: View {
     private func resetPreviewTransport() {
         stopSeamPreview()
         isPreviewPlaying = true
-        requestedPreviewFrameIndex = nil
+        previewSeekRequest = nil
     }
 
     private func toggleSeamPreview() {
@@ -1474,7 +1502,7 @@ struct GenerativeEditorView: View {
                     fps: project.exportSettings.fps,
                     loopSeconds: project.exportSettings.loopSeconds
                 )
-                requestedPreviewFrameIndex = showsLastFrame ? max(0, clock.totalFrames - 1) : 0
+                previewSeekRequest = PreviewSeekRequest(frameIndex: showsLastFrame ? max(0, clock.totalFrames - 1) : 0)
                 showsLastFrame.toggle()
                 try? await Task.sleep(nanoseconds: 650_000_000)
             }
@@ -1520,10 +1548,13 @@ struct GenerativeEditorView: View {
             return false
         }
 
-        if abs(project.exportSettings.loopSeconds - requiredSeconds) > 0.001 {
+        let fps = LoopDurationPolicy.nearestSupportedFPS(to: project.exportSettings.fps)
+        if abs(project.exportSettings.loopSeconds - requiredSeconds) > 0.001 || project.exportSettings.fps != fps {
             project.exportSettings.loopSeconds = requiredSeconds
+            project.exportSettings.fps = fps
+            project.assets.outputVideoPath = nil
+            lastExportURL = nil
         }
-        project.exportSettings.fps = LoopDurationPolicy.nearestSupportedFPS(to: project.exportSettings.fps)
         return true
     }
 
@@ -1538,18 +1569,24 @@ struct GenerativeEditorView: View {
 
     private func scheduleAutosaveCurrentProject(regenerateThumbnail: Bool) {
         editAutosaveTask?.cancel()
+        do {
+            try editingState.recordEdit(project, library: activeLibrary, regenerateThumbnail: regenerateThumbnail)
+        } catch {
+            projectFileErrorMessage = error.localizedDescription
+            return
+        }
+        let revision = editingState.revision
         editAutosaveTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 750_000_000)
-            guard !Task.isCancelled else {
+            guard !Task.isCancelled, editingState.pendingSave?.revision == revision else {
                 return
             }
-
-            autosaveCurrentProject(regenerateThumbnail: regenerateThumbnail)
-            editAutosaveTask = nil
+            _ = flushPendingEdits()
         }
     }
 
     private func saveProject() {
+        guard flushPendingEdits() else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.videoWallpaperProject]
         panel.canCreateDirectories = true
@@ -1592,7 +1629,7 @@ struct GenerativeEditorView: View {
         }
 
         do {
-            let loadedProject = try WallpaperProjectFileStore.load(from: inputURL)
+            let loadedProject = try activeLibrary.loadProject(at: inputURL)
             loadProject(loadedProject, from: inputURL)
         } catch {
             projectFileErrorMessage = error.localizedDescription
@@ -1600,9 +1637,25 @@ struct GenerativeEditorView: View {
     }
 
     private func handleAppear() {
+        isVisible = true
+        do {
+            let library = try assetLibrary.pinned()
+            guard flushPendingEdits() else { return }
+            if activeLibrary.rootURL.standardizedFileURL != library.rootURL.standardizedFileURL {
+                editingState.beginProject()
+                currentProjectURL = nil
+                project.assets = ProjectAssets(thumbnailPath: nil, outputVideoPath: nil)
+            }
+            activeLibrary = library
+        } catch {
+            projectFileErrorMessage = error.localizedDescription
+            return
+        }
         loadInitialProjectIfNeeded()
         enforceLoopSafeDurationForCurrentRenderer()
+        lastExportURL = existingOutputVideoURL(for: project)
         refreshLibraryEntries()
+        scheduleMissingThumbnail()
     }
 
     private func loadInitialProjectIfNeeded() {
@@ -1612,7 +1665,7 @@ struct GenerativeEditorView: View {
 
         didLoadInitialProject = true
         do {
-            let loadedProject = try WallpaperProjectFileStore.load(from: initialProjectURL)
+            let loadedProject = try activeLibrary.loadProject(at: initialProjectURL)
             loadProject(loadedProject, from: initialProjectURL)
         } catch {
             projectFileErrorMessage = error.localizedDescription
@@ -1620,6 +1673,8 @@ struct GenerativeEditorView: View {
     }
 
     private func loadProject(_ loadedProject: WallpaperProject, from url: URL) {
+        guard flushPendingEdits() else { return }
+        editingState.beginProject()
         let sanitizationResult = WallpaperProjectSanitizer.sanitize(
             loadedProject,
             reducedMotion: accessibilityReduceMotion
@@ -1632,49 +1687,112 @@ struct GenerativeEditorView: View {
         projectFileErrorMessage = nil
         enforceLoopSafeDurationForCurrentRenderer()
         resetPreviewTransport()
+        scheduleMissingThumbnail()
     }
 
     private func openLibraryEntry(_ entry: ProjectLibraryEntry) {
         do {
-            let loadedProject = try assetLibrary.load(entry)
+            guard flushPendingEdits() else { return }
+            let loadedProject = try activeLibrary.load(entry)
             loadProject(loadedProject, from: entry.projectURL)
         } catch {
             projectFileErrorMessage = error.localizedDescription
         }
     }
 
-    private func autosaveCurrentProject(regenerateThumbnail: Bool = false) {
+    @discardableResult
+    private func flushPendingEdits() -> Bool {
+        editAutosaveTask?.cancel()
+        editAutosaveTask = nil
+        guard let snapshot = editingState.pendingSave else { return true }
         do {
-            let savedProject = try assetLibrary.withRootAccess {
-                var projectToSave = project
-                projectToSave.rendererFamily = projectToSave.renderParameters.rendererFamily
-                if var intent = projectToSave.visualIntent {
-                    intent.rendererFamily = projectToSave.rendererFamily
-                    projectToSave.visualIntent = intent
-                }
-                let saveDate = Date()
-                let savedURL = try assetLibrary.projectURL(for: projectToSave, date: saveDate)
-                if regenerateThumbnail {
-                    let thumbnailURL = try assetLibrary.thumbnailURL(forProjectURL: savedURL)
-                    try GenerativeThumbnailRenderer.renderPNG(project: projectToSave, to: thumbnailURL)
-                    projectToSave.assets.thumbnailPath = thumbnailURL.path
-                }
-                try WallpaperProjectFileStore.save(projectToSave, to: savedURL)
-                return (projectToSave, savedURL)
+            let saved = try GenerativeSnapshotPersistence.saveRecord(snapshot)
+            if editingState.matches(snapshot, project: project, library: activeLibrary) {
+                project = saved.project
+                currentProjectURL = saved.projectURL
             }
-            project = savedProject.0
-            currentProjectURL = savedProject.1
-            projectFileErrorMessage = nil
+            editingState.didSave(snapshot)
+            refreshLibraryEntries()
+            if isVisible, snapshot.regenerateThumbnail || saved.project.assets.thumbnailPath == nil {
+                scheduleThumbnail(for: snapshot, saved: saved)
+            }
+            return true
+        } catch {
+            projectFileErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func handleLibraryRootChange() {
+        guard flushPendingEdits() else { return }
+        cancelThumbnail()
+        exportTask?.cancel()
+        exportOperationID = nil
+        isExporting = false
+        do {
+            activeLibrary = try assetLibrary.pinned()
+            editingState.beginProject()
+            currentProjectURL = nil
+            lastExportURL = nil
+            project.assets = ProjectAssets(thumbnailPath: nil, outputVideoPath: nil)
             refreshLibraryEntries()
         } catch {
             projectFileErrorMessage = error.localizedDescription
         }
     }
 
+    private func scheduleMissingThumbnail() {
+        guard isVisible, project.assets.thumbnailPath == nil, let currentProjectURL else { return }
+        do {
+            let snapshot = try editingState.snapshot(project, library: activeLibrary)
+            scheduleThumbnail(for: snapshot, saved: SavedGeneratedProject(project: project, projectURL: currentProjectURL))
+        } catch {
+            projectFileErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func scheduleThumbnail(for snapshot: GenerativeProjectSnapshot, saved: SavedGeneratedProject) {
+        cancelThumbnail()
+        let operationID = UUID()
+        thumbnailOperationID = operationID
+        thumbnailTask = Task { @MainActor in
+            defer {
+                if thumbnailOperationID == operationID {
+                    thumbnailTask = nil
+                    thumbnailOperationID = nil
+                }
+            }
+            do {
+                let data = try await GenerativeSnapshotPersistence.renderThumbnailData(for: snapshot.project) { project in
+                    try GenerativeThumbnailRenderer.renderPNG(project: project)
+                }
+                try Task.checkCancellation()
+                guard isVisible, thumbnailOperationID == operationID else { return }
+                guard let updated = try snapshot.library.attachThumbnail(data, to: saved) else { return }
+                if editingState.matches(snapshot, project: project, library: activeLibrary) {
+                    project.assets.thumbnailPath = updated.project.assets.thumbnailPath
+                }
+                refreshLibraryEntries()
+            } catch is CancellationError {
+            } catch {
+                if isVisible, thumbnailOperationID == operationID {
+                    projectFileErrorMessage = GenerativeSnapshotPersistence.thumbnailErrorMessage(error)
+                }
+            }
+        }
+    }
+
+    private func cancelThumbnail() {
+        thumbnailTask?.cancel()
+        thumbnailTask = nil
+        thumbnailOperationID = nil
+    }
+
     private func refreshLibraryEntries() {
         do {
-            libraryEntries = try assetLibrary.listProjects()
-            projectFileErrorMessage = nil
+            let scan = try activeLibrary.scanProjects()
+            libraryEntries = scan.entries
+            projectFileErrorMessage = scan.failures.isEmpty ? nil : GeneratedAssetLibraryError.incompleteScan(scan.failures).localizedDescription
         } catch {
             libraryEntries = []
             projectFileErrorMessage = error.localizedDescription
@@ -1683,11 +1801,13 @@ struct GenerativeEditorView: View {
 
     private func deleteLibraryEntry(_ entry: ProjectLibraryEntry) {
         do {
-            try assetLibrary.delete(entry)
+            guard flushPendingEdits() else { return }
+            try activeLibrary.delete(entry)
             entryPendingDeletion = nil
             if currentProjectURL == entry.projectURL {
                 currentProjectURL = nil
                 lastExportURL = nil
+                project.assets = ProjectAssets(thumbnailPath: nil, outputVideoPath: nil)
             }
             refreshLibraryEntries()
         } catch {
@@ -1698,7 +1818,8 @@ struct GenerativeEditorView: View {
 
     private func cleanupLibraryAssets() {
         do {
-            _ = try assetLibrary.cleanupOrphanedAssets()
+            guard flushPendingEdits() else { return }
+            _ = try activeLibrary.cleanupOrphanedAssets()
             projectFileErrorMessage = nil
             refreshLibraryEntries()
         } catch {
@@ -1710,8 +1831,22 @@ struct GenerativeEditorView: View {
         guard let thumbnailPath = entry.thumbnailPath else {
             return nil
         }
-        return assetLibrary.withRootAccess {
-            NSImage(contentsOfFile: thumbnailPath)
+        return try? activeLibrary.withRootAccess {
+            NSImage(data: try Data(contentsOf: URL(fileURLWithPath: thumbnailPath)))
+        }
+    }
+
+    private func applyWallpaper(_ url: URL, toSingleDisplay: Bool) {
+        do {
+            try activeLibrary.withRootAccess {
+                if toSingleDisplay {
+                    setWallpaperForDisplay(url)
+                } else {
+                    setWallpaper(url)
+                }
+            }
+        } catch {
+            projectFileErrorMessage = error.localizedDescription
         }
     }
 
@@ -1721,7 +1856,9 @@ struct GenerativeEditorView: View {
         }
 
         let url = URL(fileURLWithPath: outputVideoPath)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        return try? activeLibrary.withRootAccess {
+            FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
     }
 
     private var defaultProjectFilename: String {
@@ -1734,68 +1871,67 @@ struct GenerativeEditorView: View {
         }
 
         let url = URL(fileURLWithPath: outputVideoPath)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
-    }
-
-    private func startManualExport() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.mpeg4Movie]
-        panel.canCreateDirectories = true
-        panel.isExtensionHidden = false
-        panel.nameFieldStringValue = GeneratedAssetLibrary.exportFileName(for: project, fileExtension: "mp4")
-
-        guard panel.runModal() == .OK, let outputURL = panel.url else {
-            return
+        return try? activeLibrary.withRootAccess {
+            FileManager.default.fileExists(atPath: url.path) ? url : nil
         }
-
-        startExport(to: outputURL)
     }
 
     private func startLibraryExport() {
+        guard !isExporting, flushPendingEdits(), enforceLoopSafeDurationForCurrentRenderer() else { return }
         do {
-            startExport(to: try assetLibrary.videoURL(for: project), usesLibraryAccess: true)
+            let snapshot = try editingState.snapshot(project, library: activeLibrary)
+            let lease = try snapshot.library.beginExport(for: snapshot.project)
+            startExport(snapshot: snapshot, lease: lease)
         } catch {
             exportErrorMessage = error.localizedDescription
         }
     }
 
-    private func startExport(to outputURL: URL, usesLibraryAccess: Bool = false) {
+    private func startExport(snapshot: GenerativeProjectSnapshot, lease: GeneratedExportLease) {
         stopSeamPreview()
-        guard enforceLoopSafeDurationForCurrentRenderer() else {
-            return
-        }
         isExporting = true
         exportProgress = 0
         exportErrorMessage = nil
-        lastExportURL = nil
-
-        let exportProject = project
-        exportTask = Task {
-            let stopAccessing = usesLibraryAccess ? assetLibrary.startAccessingRootIfNeeded() : nil
+        let operationID = UUID()
+        exportOperationID = operationID
+        exportTask = Task { @MainActor in
             defer {
-                stopAccessing?()
+                lease.cancel()
+                if exportOperationID == operationID {
+                    isExporting = false
+                    exportTask = nil
+                    exportOperationID = nil
+                }
             }
             do {
-                let exportedURL = try await GenerativeVideoExporter.export(project: exportProject, to: outputURL) { progress in
+                _ = try await GenerativeVideoExporter.export(project: snapshot.project, to: lease.stagingURL) { progress in
                     Task { @MainActor in
-                        exportProgress = progress
+                        if isVisible, exportOperationID == operationID {
+                            exportProgress = progress
+                        }
                     }
                 }
-
-                project.assets.outputVideoPath = exportedURL.path
-                project.updatedAt = Date()
-                lastExportURL = exportedURL
+                try Task.checkCancellation()
+                guard isVisible, exportOperationID == operationID else { throw CancellationError() }
+                let saved = try snapshot.library.publishExport(lease, project: snapshot.project)
+                if editingState.matches(snapshot, project: project, library: activeLibrary) {
+                    project = saved.project
+                    currentProjectURL = saved.projectURL
+                    lastExportURL = lease.outputURL
+                    scheduleMissingThumbnail()
+                }
                 exportProgress = 1
-                autosaveCurrentProject()
+                refreshLibraryEntries()
             } catch is CancellationError {
-                exportErrorMessage = "Export cancelled."
-                exportProgress = 0
-                try? FileManager.default.removeItem(at: outputURL)
+                if isVisible, exportOperationID == operationID {
+                    exportErrorMessage = "Export cancelled."
+                    exportProgress = 0
+                }
             } catch {
-                exportErrorMessage = error.localizedDescription
+                if isVisible, exportOperationID == operationID {
+                    exportErrorMessage = error.localizedDescription
+                }
             }
-            isExporting = false
-            exportTask = nil
         }
     }
 

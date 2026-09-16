@@ -9,7 +9,7 @@ No account, registration, login, subscription, in-app purchase, user-generated c
 
 The app does not include third-party content. Users choose their own local video files, or generate abstract field-line wallpaper videos locally inside the app.
 
-The generative wallpaper feature is local-only in this build. Prompts are interpreted on the Mac by bundled deterministic code. Prompt text, generated project data, thumbnails, and exported videos are stored locally on the Mac and are not sent to the developer or to third-party services.
+The generative wallpaper feature is local-only in this build. Users choose a renderer and adjust seed and visual parameters directly; there is no prompt entry or language-model request in the current UI. Project data, thumbnails, and exported videos remain on the Mac and are not sent to the developer or third-party services.
 
 The app does not request access to location, contacts, camera, microphone, photos library, App Tracking Transparency, or other sensitive device capabilities. It only uses user-selected file access for videos/projects and local Application Support storage for generated wallpapers.
 
@@ -19,9 +19,9 @@ Generated wallpaper projects, thumbnails, and exported videos are stored locally
 
 Typical review flow:
 1. Launch RioVideoWallpaper.
-2. Use the menu bar item to choose a local video file and confirm it appears as the desktop wallpaper.
-3. Open Generate Wallpaper from the menu bar.
-4. Enter a prompt such as "calm blue cosmic long trail" and click Generate.
+2. On first launch, the generation editor opens without requiring an existing video.
+3. Select a Renderer, randomize the Seed, and adjust the visual controls.
+4. For a local file instead, use menu bar Settings > General > Choose Video. Use Settings > Video Generation to return to generation.
 5. Preview the generated wallpaper, export it to the local library, then click Set as Wallpaper.
 6. Relaunch the app to confirm the selected local or generated wallpaper is restored.
 ```
@@ -35,7 +35,7 @@ RioVideoWallpaper は、ユーザーが選択したローカル動画、また�
 
 アプリには第三者コンテンツは含まれていません。ユーザーは自分のローカル動画ファイルを選択するか、アプリ内で抽象的なフィールドライン壁紙動画をローカル生成します。
 
-このビルドの生成壁紙機能はローカルのみで動作します。プロンプトは、アプリに同梱された決定的なコードにより Mac 上で解釈されます。プロンプトテキスト、生成プロジェクトデータ、サムネイル、書き出された動画は Mac 上にローカル保存され、開発者または第三者サービスへ送信されません。
+このビルドの生成壁紙機能はローカルのみで動作します。レンダラー・シード・描画パラメータを直接操作します。現行UIにプロンプト入力や言語モデルへのリクエストはありません。プロジェクトデータ、サムネイル、書き出された動画は Mac 上に保存され、開発者または第三者サービスへ送信されません。
 
 位置情報、連絡先、カメラ、マイク、写真ライブラリ、App Tracking Transparency、その他のセンシティブなデバイス機能へのアクセスは要求しません。動画/プロジェクトに対するユーザー選択ファイルアクセスと、生成壁紙用のローカル Application Support ストレージのみを使用します。
 
@@ -45,9 +45,9 @@ RioVideoWallpaper は、ユーザーが選択したローカル動画、また�
 
 典型的な審査手順:
 1. RioVideoWallpaper を起動します。
-2. メニューバー項目からローカル動画ファイルを選択し、デスクトップ壁紙として表示されることを確認します。
-3. メニューバーから Generate Wallpaper を開きます。
-4. "calm blue cosmic long trail" などのプロンプトを入力して Generate をクリックします。
+2. 初回起動では既存動画の選択なしで生成エディタが開きます。
+3. レンダラーを選択し、シードや描画パラメータを調整します。
+4. ローカル動画を使う場合はメニューバーの「設定」→「一般」→「動画を選択」を使います。生成は設定の「動画生成」へ戻ります。
 5. 生成壁紙をプレビューし、ローカルライブラリへ書き出してから Set as Wallpaper をクリックします。
 6. アプリを再起動し、選択したローカル動画または生成壁紙が復元されることを確認します。
 ```

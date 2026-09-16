@@ -765,7 +765,7 @@ struct GenerativeModelTests {
         #expect(try library.listProjects().isEmpty)
     }
 
-    @Test func generatedAssetLibraryProvidesStableVideoOutputURL() throws {
+    @Test func generatedAssetLibraryProvidesRevisionVideoOutputURLs() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("GeneratedAssetLibraryVideo-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -779,7 +779,9 @@ struct GenerativeModelTests {
         let videoURL = try library.videoURL(for: project)
         let movURL = try library.videoURL(for: project, fileExtension: ".mov")
 
-        #expect(videoURL == library.videosDirectoryURL.appendingPathComponent(project.id.uuidString).appendingPathExtension("mp4"))
+        #expect(videoURL.deletingLastPathComponent() == library.videosDirectoryURL)
+        #expect(videoURL.lastPathComponent.hasPrefix(project.id.uuidString + "-"))
+        #expect(videoURL != (try library.videoURL(for: project)))
         #expect(movURL.pathExtension == "mov")
         #expect(FileManager.default.fileExists(atPath: library.videosDirectoryURL.path))
     }
@@ -1697,9 +1699,12 @@ struct GenerativeModelTests {
         #expect(RendererFamily.allCases.count == 67)
         #expect(capabilities.supportedRendererFamilies == RendererFamily.allCases)
         #expect(catalogFamilies == RendererFamily.allCases)
+        #expect(capabilities.rendererCatalog.filter { $0.loopContract.isExactlyPeriodic }.count == 65)
+        #expect(capabilities.rendererCatalog.filter { !$0.loopContract.isExactlyPeriodic }.count == 2)
 
         for descriptor in capabilities.rendererCatalog {
-            #expect(descriptor.loopContract.isExactlyPeriodic)
+            let hasFiniteTrailWarmup = descriptor.family == .fieldLines || descriptor.family == .orbital
+            #expect(descriptor.loopContract.isExactlyPeriodic == !hasFiniteTrailWarmup)
             #expect(!descriptor.loopContract.phaseModel.isEmpty)
             #expect(!descriptor.loopContract.durationRule.isEmpty)
         }

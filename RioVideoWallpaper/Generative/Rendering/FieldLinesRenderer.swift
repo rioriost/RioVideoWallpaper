@@ -13,7 +13,8 @@ struct FieldLinesVertex {
     var pointSize: Float
 }
 
-final class FieldLinesRenderer {
+final class FieldLinesRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
     private let fadePipelineState: MTLRenderPipelineState
@@ -138,6 +139,7 @@ final class FieldLinesRenderer {
               ensureAccumulationTextures(size: drawableSize, pixelFormat: outputTexture.pixelFormat),
               let currentTexture,
               let previousTexture else {
+            renderingError = RenderEncodingError.textureCreationFailed
             return
         }
 
@@ -154,6 +156,7 @@ final class FieldLinesRenderer {
             length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
             options: [.storageModeShared]
         ) else {
+            renderingError = RenderEncodingError.bufferCreationFailed
             return
         }
 
@@ -164,6 +167,7 @@ final class FieldLinesRenderer {
         offscreenDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
 
         guard let offscreenEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: offscreenDescriptor) else {
+            renderingError = RenderEncodingError.encoderCreationFailed
             return
         }
 
@@ -184,6 +188,7 @@ final class FieldLinesRenderer {
         offscreenEncoder.endEncoding()
 
         guard let drawableEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
+            renderingError = RenderEncodingError.encoderCreationFailed
             return
         }
         drawableEncoder.setRenderPipelineState(copyPipelineState)
@@ -220,7 +225,7 @@ final class FieldLinesRenderer {
         return previousTexture != nil && currentTexture != nil
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: FieldLinesParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -282,7 +287,7 @@ final class FieldLinesRenderer {
         for particleID in 0..<particleCount {
             let id = Float(particleID)
             let noise = fract(sin(id * 12.9898 + seedPhase) * 43_758.547)
-            let angle = Float.pi * 2.0 * fract(id * 0.017 + Float(clock.normalizedLoopTime(frameIndex: frameIndex)))
+            let angle = Float.pi * 2.0 * fract(id * 0.017)
             let ring = (220.0 + 820.0 * noise) * scale
             let wobble = 80.0 * scale * sin(phase * 2.0 + id * 0.13 + seedPhase * 0.17)
             let radius = ring + wobble
@@ -366,6 +371,18 @@ final class GenerativeFrameRenderer {
     private let superformulaMorphRenderer: SuperformulaMorphRenderer
     private let proceduralPatternRenderer: ProceduralPatternRenderer
 
+    private var diagnostics: [RendererDiagnostics] {
+        [fieldLinesRenderer, orbitalRenderer, softVolumetricRenderer, gridCityRenderer,
+         interferenceFieldRenderer, periodicNoiseRenderer, cyclicAutomataRenderer,
+         agentSwarmRenderer, kaleidoscopeRenderer, voronoiFlowRenderer, reactionDiffusionRenderer,
+         plasmaFieldRenderer, harmonicTunnelRenderer, lissajousWeaveRenderer, phyllotaxisBloomRenderer,
+         hexPulseLatticeRenderer, superformulaMorphRenderer, proceduralPatternRenderer]
+    }
+
+    func checkEncoding() throws {
+        if let error = diagnostics.compactMap(\.renderingError).first { throw error }
+    }
+
     init(device: MTLDevice, colorPixelFormat: MTLPixelFormat) throws {
         fieldLinesRenderer = try FieldLinesRenderer(device: device, colorPixelFormat: colorPixelFormat)
         orbitalRenderer = try OrbitalRenderer(device: device, colorPixelFormat: colorPixelFormat)
@@ -390,6 +407,7 @@ final class GenerativeFrameRenderer {
     func resetAccumulation() {
         fieldLinesRenderer.resetAccumulation()
         orbitalRenderer.resetAccumulation()
+        diagnostics.forEach { $0.renderingError = nil }
     }
 
     func render(
@@ -401,6 +419,7 @@ final class GenerativeFrameRenderer {
         commandBuffer: MTLCommandBuffer,
         renderPassDescriptor: MTLRenderPassDescriptor
     ) {
+        diagnostics.forEach { $0.renderingError = nil }
         switch parameters {
         case .fieldLines(let fieldLinesParameters):
             fieldLinesRenderer.render(
@@ -1068,6 +1087,7 @@ final class GenerativeFrameRenderer {
         outputTexture: MTLTexture,
         commandBuffer: MTLCommandBuffer
     ) {
+        diagnostics.forEach { $0.renderingError = nil }
         switch parameters {
         case .fieldLines(let fieldLinesParameters):
             fieldLinesRenderer.render(
@@ -1771,7 +1791,8 @@ final class GenerativeFrameRenderer {
     }
 }
 
-final class OrbitalRenderer {
+final class OrbitalRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
     private let fadePipelineState: MTLRenderPipelineState
@@ -1895,6 +1916,7 @@ final class OrbitalRenderer {
               ensureAccumulationTextures(size: drawableSize, pixelFormat: outputTexture.pixelFormat),
               let currentTexture,
               let previousTexture else {
+            renderingError = RenderEncodingError.textureCreationFailed
             return
         }
 
@@ -1911,6 +1933,7 @@ final class OrbitalRenderer {
             length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
             options: [.storageModeShared]
         ) else {
+            renderingError = RenderEncodingError.bufferCreationFailed
             return
         }
 
@@ -1921,6 +1944,7 @@ final class OrbitalRenderer {
         offscreenDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
 
         guard let offscreenEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: offscreenDescriptor) else {
+            renderingError = RenderEncodingError.encoderCreationFailed
             return
         }
 
@@ -1941,6 +1965,7 @@ final class OrbitalRenderer {
         offscreenEncoder.endEncoding()
 
         guard let drawableEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
+            renderingError = RenderEncodingError.encoderCreationFailed
             return
         }
         drawableEncoder.setRenderPipelineState(copyPipelineState)
@@ -1977,7 +2002,7 @@ final class OrbitalRenderer {
         return previousTexture != nil && currentTexture != nil
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: OrbitalParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -2132,7 +2157,8 @@ final class OrbitalRenderer {
     }
 }
 
-final class SoftVolumetricRenderer {
+final class SoftVolumetricRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -2222,25 +2248,15 @@ final class SoftVolumetricRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: SoftVolumetricParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -2291,7 +2307,7 @@ final class SoftVolumetricRenderer {
                 let layerAngle = cloudSeed + l * 0.81 + phase * cycleCount
                 let local = SIMD2<Float>(
                     cos(layerAngle) * cloudRadius * 0.28 * layerProgress,
-                    sin(layerAngle * 1.3) * cloudRadius * 0.18 * layerProgress
+                    sin((cloudSeed + l * 0.81) * 1.3 + phase * cycleCount) * cloudRadius * 0.18 * layerProgress
                 )
                 let screen = anchor + local
                 vertices.append(FieldLinesVertex(
@@ -2376,7 +2392,8 @@ final class SoftVolumetricRenderer {
     }
 }
 
-final class GridCityRenderer {
+final class GridCityRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -2466,25 +2483,15 @@ final class GridCityRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: GridCityParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -2550,7 +2557,7 @@ final class GridCityRenderer {
                 let x = centerX - halfWidth + halfWidth * 2.0 * t
                 vertices.append(FieldLinesVertex(
                     position: normalizedPosition(SIMD2<Float>(x, y), width: width, height: height),
-                    color: SIMD4<Float>(gridColor.x, gridColor.y, gridColor.z, gridAlpha * alphaBoost * (0.55 + curvedZ * 0.45)),
+                    color: SIMD4<Float>(gridColor.x, gridColor.y, gridColor.z, gridAlpha * alphaBoost * (0.55 + curvedZ * 0.45) * LoopMath.lifetimeEnvelope(moving)),
                     pointSize: (1.0 + glowSize * 0.2 + curvedZ * 1.6) * max(1.0, scale)
                 ))
             }
@@ -2606,7 +2613,7 @@ final class GridCityRenderer {
                 let x = centerX + (groundX - centerX) * curvedZ
                 vertices.append(FieldLinesVertex(
                     position: normalizedPosition(SIMD2<Float>(x, y), width: width, height: height),
-                    color: SIMD4<Float>(color.x, color.y, color.z, towerAlpha * alphaBoost * (1.0 - Float(trail) / 22.0)),
+                    color: SIMD4<Float>(color.x, color.y, color.z, towerAlpha * alphaBoost * (1.0 - Float(trail) / 22.0) * LoopMath.lifetimeEnvelope(z)),
                     pointSize: (2.8 + glowSize * 0.95 + curvedZ * 3.0) * max(1.0, scale)
                 ))
             }
@@ -2657,7 +2664,8 @@ final class GridCityRenderer {
     }
 }
 
-final class InterferenceFieldRenderer {
+final class InterferenceFieldRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -2748,25 +2756,15 @@ final class InterferenceFieldRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: InterferenceFieldParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -2900,7 +2898,8 @@ final class InterferenceFieldRenderer {
     }
 }
 
-final class PeriodicNoiseRenderer {
+final class PeriodicNoiseRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -2991,25 +2990,15 @@ final class PeriodicNoiseRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: PeriodicNoiseParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -3177,7 +3166,8 @@ final class PeriodicNoiseRenderer {
     }
 }
 
-final class CyclicAutomataRenderer {
+final class CyclicAutomataRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -3267,25 +3257,15 @@ final class CyclicAutomataRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: CyclicAutomataParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -3349,10 +3329,9 @@ final class CyclicAutomataRenderer {
                     mutation: mutation
                 )
 
-                let state = floor(fract(base) * Float(stateCount))
-                let stateProgress = state / Float(max(1, stateCount - 1))
+                let stateProgress = LoopMath.cyclicPaletteProgress(fract(base), states: stateCount)
                 let edge = min(1.0, abs(base - neighborA) * 3.0 + abs(base - neighborB) * 3.0)
-                let reactionFront = pow(abs(sin((base * Float(stateCount) + phase) * .pi)), 1.15)
+                let reactionFront = pow(abs(sin(base * Float(stateCount) * .pi + phase)), 1.15)
                 let intensity = mix(0.32 + reactionFront * 0.42, edge, edgeSharpness)
                 guard intensity > 0.04 else { continue }
 
@@ -3439,7 +3418,8 @@ final class CyclicAutomataRenderer {
     }
 }
 
-final class AgentSwarmRenderer {
+final class AgentSwarmRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -3529,25 +3509,15 @@ final class AgentSwarmRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: AgentSwarmParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -3593,7 +3563,6 @@ final class AgentSwarmRenderer {
             for trail in 0..<trailSteps {
                 let trailProgress = Float(trail) / Float(max(1, trailSteps))
                 let localPhase = phase - trailProgress * 0.42 * Float(cycleCount)
-                let normalizedPhase = localPhase / (.pi * 2.0)
                 let pathA = localPhase + localSeed + Float(agent % 5) * 0.12
                 let pathB = localPhase - localSeed * 0.71 + Float(agent % 7) * 0.09
                 let wandering = SIMD2<Float>(
@@ -3601,8 +3570,8 @@ final class AgentSwarmRenderer {
                     cos(pathB) + cos(pathA - id * 0.09) * wander
                 ) * orbitRadius * 0.42
                 let lane = SIMD2<Float>(
-                    fract(base + normalizedPhase + sin(id) * 0.03) * 2.0 - 1.0,
-                    fract(base * 1.7 - normalizedPhase + cos(id * 0.7) * 0.04) * 2.0 - 1.0
+                    fract(base + sin(id) * 0.03) * 2.0 - 1.0 + sin(localPhase) * 0.35,
+                    fract(base * 1.7 + cos(id * 0.7) * 0.04) * 2.0 - 1.0 - sin(localPhase) * 0.35
                 ) * separation
                 let position = wrap(groupAnchor + wandering + lane * 0.52)
                 let screen = SIMD2<Float>(
@@ -3673,7 +3642,8 @@ final class AgentSwarmRenderer {
     }
 }
 
-final class KaleidoscopeRenderer {
+final class KaleidoscopeRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -3763,25 +3733,15 @@ final class KaleidoscopeRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: KaleidoscopeParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -3832,7 +3792,7 @@ final class KaleidoscopeRenderer {
                     sin(localAngle * Float(segments) + phase + ringProgress * .pi)
                 let lace = 1.0 + complexity * 0.14 * harmonicA + complexity * 0.10 * harmonicB
                 let radius = baseRadius * petal * lace
-                let angle = segmentAngle + localAngle * fold + twist * ringProgress * phase +
+                let angle = segmentAngle + localAngle * fold + twist * ringProgress * sin(phase) +
                     sin(ringPhase + phase) * twist * 0.08
                 let x = cos(angle) * radius
                 let y = sin(angle) * radius
@@ -3852,7 +3812,7 @@ final class KaleidoscopeRenderer {
                 ))
 
                 if complexity > 0.35 {
-                    let counterAngle = segmentAngle - localAngle * fold - twist * ringProgress * phase
+                    let counterAngle = segmentAngle - localAngle * fold - twist * ringProgress * sin(phase)
                     let counterRadius = radius * (0.70 + complexity * 0.22)
                     let counterScreen = SIMD2<Float>(
                         cos(counterAngle) * counterRadius * width * 0.46 + width * 0.5,
@@ -3908,7 +3868,8 @@ final class KaleidoscopeRenderer {
     }
 }
 
-final class VoronoiFlowRenderer {
+final class VoronoiFlowRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -3998,25 +3959,15 @@ final class VoronoiFlowRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: VoronoiFlowParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -4182,7 +4133,8 @@ final class VoronoiFlowRenderer {
     }
 }
 
-final class ReactionDiffusionRenderer {
+final class ReactionDiffusionRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -4272,25 +4224,15 @@ final class ReactionDiffusionRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: ReactionDiffusionParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -4437,7 +4379,8 @@ final class ReactionDiffusionRenderer {
     }
 }
 
-final class PlasmaFieldRenderer {
+final class PlasmaFieldRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -4527,25 +4470,15 @@ final class PlasmaFieldRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: PlasmaFieldParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -4697,7 +4630,8 @@ final class PlasmaFieldRenderer {
     }
 }
 
-final class HarmonicTunnelRenderer {
+final class HarmonicTunnelRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -4787,25 +4721,15 @@ final class HarmonicTunnelRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: HarmonicTunnelParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -4846,7 +4770,7 @@ final class HarmonicTunnelRenderer {
             let travel = fract(ringT + phase / (.pi * 2.0))
             let depthEase = pow(max(0.001, travel), 0.55 + perspective * 0.85)
             let radius = maxRadius * (0.12 + depthEase * (1.18 + depth * 0.46))
-            let ringAlpha = alpha * alphaBoost * (0.26 + travel * 0.86)
+            let ringAlpha = alpha * alphaBoost * (0.26 + travel * 0.86) * LoopMath.lifetimeEnvelope(travel)
             let ringPhase = phase + ringT * .pi * 2.0
 
             for pointIndex in 0..<points {
@@ -4929,7 +4853,8 @@ final class HarmonicTunnelRenderer {
     }
 }
 
-final class LissajousWeaveRenderer {
+final class LissajousWeaveRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -5019,25 +4944,15 @@ final class LissajousWeaveRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: LissajousWeaveParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -5084,7 +4999,7 @@ final class LissajousWeaveRenderer {
                 let braid = sin(theta * (frequencyX + frequencyY) + phase + curvePhase)
                 let modulatedTheta = theta + braid * weaveAmount * 0.22
                 var x = sin(frequencyX * modulatedTheta + curvePhase)
-                var y = sin(frequencyY * modulatedTheta + phase + curvePhase * 1.37)
+                var y = sin(frequencyY * modulatedTheta + phase * 2.0 + (curvePhase - phase) * 1.37)
                 x += weaveAmount * 0.22 * sin((frequencyY + 1.0) * theta - phase + seedPhase)
                 y += weaveAmount * 0.22 * cos((frequencyX + 1.0) * theta + phase - seedPhase)
                 let envelope = 0.78 + modulation * 0.20 * sin(theta * 2.0 + phase + curveT * .pi)
@@ -5152,7 +5067,8 @@ final class LissajousWeaveRenderer {
     }
 }
 
-final class PhyllotaxisBloomRenderer {
+final class PhyllotaxisBloomRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -5242,25 +5158,15 @@ final class PhyllotaxisBloomRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: PhyllotaxisBloomParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -5360,7 +5266,8 @@ final class PhyllotaxisBloomRenderer {
     }
 }
 
-final class HexPulseLatticeRenderer {
+final class HexPulseLatticeRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -5450,25 +5357,15 @@ final class HexPulseLatticeRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: HexPulseLatticeParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -5597,7 +5494,8 @@ final class HexPulseLatticeRenderer {
     }
 }
 
-final class SuperformulaMorphRenderer {
+final class SuperformulaMorphRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
 
@@ -5687,25 +5585,15 @@ final class SuperformulaMorphRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         parameters: SuperformulaMorphParameters,
         seed: UInt64,
         frameIndex: Int,
@@ -5836,7 +5724,8 @@ final class SuperformulaMorphRenderer {
     }
 }
 
-final class ProceduralPatternRenderer {
+final class ProceduralPatternRenderer: RendererDiagnostics {
+    var renderingError: Error?
     private let device: MTLDevice
     private let pointPipelineState: MTLRenderPipelineState
     private var schoolingSwarmSimulationCache: SchoolingSwarmSimulationCache?
@@ -5950,25 +5839,15 @@ final class ProceduralPatternRenderer {
             clock: clock,
             drawableSize: drawableSize
         )
-        guard !vertices.isEmpty else { return }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<FieldLinesVertex>.stride * vertices.count,
-            options: [.storageModeShared]
-        ) else {
-            return
+        do {
+            try encodePointVertices(vertices, device: device, pipeline: pointPipelineState,
+                                    commandBuffer: commandBuffer, descriptor: finalRenderPassDescriptor)
+        } catch {
+            renderingError = error
         }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {
-            return
-        }
-
-        encoder.setRenderPipelineState(pointPipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
-        encoder.endEncoding()
     }
 
-    private func makeVertices(
+    fileprivate func makeVertices(
         family: RendererFamily,
         parameters: ProceduralPatternParameters,
         seed: UInt64,
@@ -6791,10 +6670,9 @@ final class ProceduralPatternRenderer {
             let id = Float(node)
             let a = fract(sin(seedPhase + id * 21.17) * 48291.3) * .pi * 2.0
             let r = sqrt(fract(cos(seedPhase * 0.83 + id * 39.7) * 19371.2)) * maxRadius * (1.10 + depth * 0.26)
-            let driftA = phase + id * 0.33
             let drift = SIMD2<Float>(
-                sin(driftA * harmonicA / 5.0) * maxRadius * modulation * 0.10,
-                cos(driftA * harmonicB / 7.0) * maxRadius * modulation * 0.10
+                sin(phase * max(1.0, (harmonicA / 5.0).rounded()) + id * 0.33 * harmonicA / 5.0) * maxRadius * modulation * 0.10,
+                cos(phase * max(1.0, (harmonicB / 7.0).rounded()) + id * 0.33 * harmonicB / 7.0) * maxRadius * modulation * 0.10
             )
             nodes.append(SIMD2<Float>(cos(a) * r * 1.42, sin(a) * r * 1.04) + drift)
         }
@@ -6845,7 +6723,7 @@ final class ProceduralPatternRenderer {
                 let x = launchX + velocityX * (t - 0.5)
                 let y = maxRadius * 1.18 - velocityY * sin(t * .pi) + maxRadius * 0.08 * sin(phase + layer * harmonicA)
                 let pulse = smoothEnvelope(age, attack: 0.06, release: 0.92) * pow(1.0 - Float(sample) / Float(trailSamples), 1.2)
-                append(rotate(SIMD2<Float>(x, y), by: rotation) + center, layer, 0.36 + pulse * 0.78, 0.76 + pulse * 0.96)
+                append(rotate(SIMD2<Float>(x, y), by: rotation) + center, layer, smoothEnvelope(age, attack: 0.06, release: 0.92) * 0.36 + pulse * 0.78, 0.76 + pulse * 0.96)
             }
         }
     }
@@ -6921,7 +6799,8 @@ final class ProceduralPatternRenderer {
                     sin(t * .pi * 2.0 * harmonicA + phase + ribbonPhase) * maxRadius * modulation * 0.24 +
                     cos(t * .pi * 2.0 * harmonicB - phase) * maxRadius * modulation * 0.12
                 let flow = wrapCentered(y + phase / (.pi * 2.0) * maxRadius * 2.66, span: maxRadius * 2.66)
-                append(rotate(SIMD2<Float>(x, flow), by: rotation) + center, layer, 0.58 + 0.42 * sin(t * .pi), 0.84 + modulation * 0.64)
+                let life = LoopMath.lifetimeEnvelope(fract(t + phase / (.pi * 2.0)))
+                append(rotate(SIMD2<Float>(x, flow), by: rotation) + center, layer, (0.58 + 0.42 * sin(t * .pi)) * life, 0.84 + modulation * 0.64)
             }
         }
     }
@@ -7298,7 +7177,7 @@ final class ProceduralPatternRenderer {
                 let t = Float(sample) / Float(max(1, samples - 1))
                 let y = -height * 0.56 + height * t
                 let waveA = sin(t * .pi * harmonicA + lanePhase)
-                let waveB = sin(t * .pi * harmonicB - phase * 0.73 + seed * 0.41)
+                let waveB = sin(t * .pi * harmonicB - phase + seed * 0.41)
                 let fold = sin((layer * 2.0 + t * 0.7) * .pi * 2.0 + phase)
                 let x = baseX + (waveA * 0.10 + waveB * 0.055 + fold * 0.035) * width * modulation
                 let verticalGlow = pow(max(0.0, sin(t * .pi)), 0.45)
@@ -7407,7 +7286,7 @@ final class ProceduralPatternRenderer {
                 let t = Float(sample) / Float(max(1, samples - 1))
                 let theta = t * .pi * 2.0
                 let lobe = 0.58 + 0.42 * sin(theta * harmonicA + phase + seed)
-                let smoke = 0.62 + 0.38 * sin(theta * harmonicB - phase * 0.7 + seed * 0.3)
+                let smoke = 0.62 + 0.38 * sin(theta * harmonicB - phase + seed * 0.3)
                 let radius = maxRadius * (0.08 + depth * 0.20) * lobe * smoke
                 let swirl = theta + modulation * 0.85 * sin(phase + t * .pi * 2.0)
                 let point = centerPoint + SIMD2<Float>(cos(swirl) * radius, sin(swirl) * radius * (0.72 + depth * 0.32))
@@ -7485,17 +7364,17 @@ final class ProceduralPatternRenderer {
             let layer = Float(petal) / Float(max(1, petals - 1))
             let seed = seedPhase + Float(petal) * 4.113
             let depthLayer = 0.35 + 0.65 * fract(sin(seed * 0.27) * 217.9)
-            let fall = fract(fract(cos(seed * 0.71) * 193.4) + phaseUnit * (0.24 + depthLayer * 0.38))
-            let sway = sin(phase * (0.8 + depthLayer) + layer * .pi * 2.0 * harmonicA) * 0.08 * modulation
+            let fall = fract(fract(cos(seed * 0.71) * 193.4) + phaseUnit * (1.0 + floor(depthLayer * 2.0)))
+            let sway = sin(phase + layer * .pi * 2.0 * harmonicA) * 0.08 * modulation
             let x = (fract(fract(sin(seed) * 43758.5453) + sway + 1.0) - 0.5) * width
             let y = (fall - 0.5) * height
-            let angle = phase * (0.7 + depthLayer) + seed
+            let angle = phase * (1.0 + floor(depthLayer * 2.0)) + seed
             let petalSize = maxRadius * (0.012 + depthLayer * 0.020)
             for sample in 0..<5 {
                 let theta = Float(sample) / 5.0 * .pi * 2.0 + angle
                 let r = petalSize * (sample == 0 ? 0.0 : 1.0)
                 let point = SIMD2<Float>(x + cos(theta) * r, y + sin(theta) * r * 0.54)
-                append(rotate(point, by: rotation) + center, fract(0.92 + layer * 0.05), 0.52 + depthLayer * 0.42, 0.72 + depthLayer * 0.78)
+                append(rotate(point, by: rotation) + center, fract(0.92 + layer * 0.05), (0.52 + depthLayer * 0.42) * LoopMath.lifetimeEnvelope(fall), 0.72 + depthLayer * 0.78)
             }
         }
     }
@@ -7521,12 +7400,12 @@ final class ProceduralPatternRenderer {
         for flake in 0..<flakes {
             let seed = seedPhase + Float(flake) * 6.171
             let z = 0.28 + 0.72 * fract(sin(seed * 1.31) * 97.3)
-            let fall = fract(fract(cos(seed) * 811.3) + phaseUnit * (0.18 + z * 0.46))
+            let fall = fract(fract(cos(seed) * 811.3) + phaseUnit * (1.0 + floor(z * 2.0)))
             let wind = sin(phase + fall * .pi * 2.0 * harmonicA + seed) * 0.055 * modulation
             let x = (fract(fract(sin(seed * 0.83) * 43758.5453) + wind + 1.0) - 0.5) * width
             let y = (fall - 0.5) * height
             let size = 0.55 + z * 1.35
-            let pulse = 0.44 + z * 0.50
+            let pulse = (0.44 + z * 0.50) * LoopMath.lifetimeEnvelope(fall)
             append(rotate(SIMD2<Float>(x, y), by: rotation) + center, fract(0.56 + z * 0.08), pulse, size)
             if flake % 3 == 0 {
                 let delta = maxRadius * 0.010 * size
@@ -7595,7 +7474,7 @@ final class ProceduralPatternRenderer {
             for sample in 0..<samples {
                 let t = Float(sample) / Float(max(1, samples - 1))
                 let x = -width * 0.5 + width * t
-                let wave = sin(t * .pi * harmonicA + phase + seed) + 0.55 * sin(t * .pi * harmonicB - phase * 0.8 + seed)
+                let wave = sin(t * .pi * harmonicA + phase + seed) + 0.55 * sin(t * .pi * harmonicB - phase + seed)
                 let y = baseY + wave * maxRadius * (0.035 + modulation * 0.050)
                 let focus = pow(max(0.0, 0.5 + 0.5 * sin(wave * .pi + phase)), 2.0)
                 append(rotate(SIMD2<Float>(x, y), by: rotation) + center, fract(0.48 + layer * 0.12), 0.30 + focus * (0.54 + depth * 0.20), 0.68 + focus * 0.72)
@@ -7624,19 +7503,19 @@ final class ProceduralPatternRenderer {
         for cloud in 0..<clouds {
             let layer = Float(cloud) / Float(max(1, clouds - 1))
             let seed = seedPhase + Float(cloud) * 9.173
-            let orbit = phase * (0.18 + 0.08 * fract(seed)) + seed
+            let orbit = sin(phase) * (.pi * 2.0) * (0.18 + 0.08 * fract(seed)) + seed
             let cloudCenter = SIMD2<Float>(
                 (fract(sin(seed) * 43758.5453) - 0.5) * width + cos(orbit) * maxRadius * 0.10 * modulation,
                 (fract(cos(seed * 0.61) * 24634.6345) - 0.5) * height + sin(orbit) * maxRadius * 0.08 * modulation
             )
             for sample in 0..<samples {
                 let t = Float(sample) / Float(max(1, samples - 1))
-                let theta = fract(sin(seed + Float(sample) * 1.37) * 719.2) * .pi * 2.0 + phase * 0.18
+                let theta = fract(sin(seed + Float(sample) * 1.37) * 719.2) * .pi * 2.0 + sin(phase) * (.pi * 2.0) * 0.18
                 let radial = sqrt(fract(cos(seed * 0.73 + Float(sample)) * 431.8))
                 let lobe = 0.66 + 0.34 * sin(theta * harmonicA + phase + seed)
                 let r = maxRadius * (0.08 + depth * 0.18) * radial * lobe
                 let point = cloudCenter + SIMD2<Float>(cos(theta) * r, sin(theta) * r * (0.72 + depth * 0.34))
-                let glow = smoothEnvelope(fract(t + phase / (.pi * 2.0) * 0.18 + layer), attack: 0.18, release: 0.96)
+                let glow = smoothEnvelope(fract(t + sin(phase) * 0.18 + layer), attack: 0.18, release: 0.96)
                 append(rotate(point, by: rotation) + center, fract(layer * 0.50 + t * 0.18), 0.24 + glow * 0.62, 0.92 + radial * 1.10)
             }
         }
@@ -8725,7 +8604,7 @@ final class ProceduralPatternRenderer {
                 append(
                     rotate(point, by: rotation) + center,
                     layer,
-                    0.30 + localPulse * 0.82,
+                    (0.30 + localPulse * 0.82) * LoopMath.lifetimeEnvelope(fract(wrappedY / height + 0.5)),
                     0.62 + localPulse * 1.18
                 )
             }
@@ -8840,7 +8719,7 @@ final class ProceduralPatternRenderer {
             let layer = Float(path) / Float(max(1, pathCount - 1))
             var x = Int(floor(mazeHash(path, 0, 0, path) * Float(columns)))
             var y = Int(floor(mazeHash(0, path, 1, path) * Float(rows)))
-            let localPhase = fract(phase * 0.5 + layer * 0.37 + rotationPhase * 0.25)
+            let localPhase = fract(phase / (.pi * 2.0) + layer * 0.37 + rotationPhase * 0.25)
 
             for step in 0..<stepCount {
                 let directionSelector = mazeHash(x, y, step, path)
@@ -8908,7 +8787,8 @@ final class ProceduralPatternRenderer {
         for string in 0..<stringCount {
             let layer = Float(string) / Float(max(1, stringCount - 1))
             let offset = seedPhase + layer * .pi * 2.0
-            let swimPhase = phase * (0.72 + 0.28 * fract(layer * 9.73)) + rotationPhase
+            let travelPhase = phase + sin(phase) * 0.28 * fract(layer * 9.73)
+            let swimPhase = travelPhase + rotationPhase
             let bodyScale = 0.68 + depth * 0.42 + fract(sin(layer * 41.3 + seedPhase) * 91.7) * 0.20
 
             for sample in 0..<sampleCount {
@@ -8916,14 +8796,14 @@ final class ProceduralPatternRenderer {
                 let along = (t - 0.5) * 2.0
                 let envelope = pow(max(0.0, 1.0 - abs(along)), 0.38)
                 let waveA = sin(along * .pi * harmonicA + swimPhase + offset)
-                let waveB = sin(along * .pi * harmonicB - swimPhase * 1.23 + offset * 0.7)
+                let waveB = sin(along * .pi * harmonicB - travelPhase * 2.0 - rotationPhase * 1.23 + offset * 0.7)
                 let driftX = sin(swimPhase + offset * 0.51) * xSpan * 0.24
-                let driftY = cos(swimPhase * 0.87 + offset * 0.43) * ySpan * 0.22
+                let driftY = cos(travelPhase + rotationPhase * 0.87 + offset * 0.43) * ySpan * 0.22
                 let x = along * xSpan * bodyScale * (0.44 + modulation * 0.20) +
                     waveB * xSpan * modulation * 0.12 +
                     driftX
                 let y = waveA * ySpan * (0.20 + modulation * 0.22) +
-                    sin(along * .pi * 2.0 + swimPhase * 1.8 + offset) * ySpan * 0.12 +
+                    sin(along * .pi * 2.0 + travelPhase * 2.0 + rotationPhase * 1.8 + offset) * ySpan * 0.12 +
                     driftY
                 let braid = sin(t * .pi * 2.0 * 7.0 + phase * 2.0 + layer * .pi)
                 let point = SIMD2<Float>(x, y + braid * ySpan * 0.018 * modulation)
@@ -9059,6 +8939,66 @@ final class ProceduralPatternRenderer {
 
     private func fract(_ value: Float) -> Float {
         value - floor(value)
+    }
+}
+
+extension GenerativeFrameRenderer {
+    func sampleVertices(
+        parameters: RenderParameters, seed: UInt64, frameIndex: Int,
+        clock: RenderClock, drawableSize: CGSize
+    ) -> [FieldLinesVertex] {
+        switch parameters {
+        case .fieldLines(let p):
+            return fieldLinesRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .orbital(let p):
+            return orbitalRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .softVolumetric(let p):
+            return softVolumetricRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .gridCity(let p):
+            return gridCityRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .interferenceField(let p):
+            return interferenceFieldRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .periodicNoise(let p):
+            return periodicNoiseRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .cyclicAutomata(let p):
+            return cyclicAutomataRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .agentSwarm(let p):
+            return agentSwarmRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .kaleidoscope(let p):
+            return kaleidoscopeRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .voronoiFlow(let p):
+            return voronoiFlowRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .reactionDiffusion(let p):
+            return reactionDiffusionRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .plasmaField(let p):
+            return plasmaFieldRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .harmonicTunnel(let p):
+            return harmonicTunnelRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .lissajousWeave(let p):
+            return lissajousWeaveRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .phyllotaxisBloom(let p):
+            return phyllotaxisBloomRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .hexPulseLattice(let p):
+            return hexPulseLatticeRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .superformulaMorph(let p):
+            return superformulaMorphRenderer.makeVertices(parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        case .auroraCurtain(let p), .bloomingCircuits(let p), .cellularBloom(let p),
+             .chladniPlate(let p), .circuitTracer(let p), .cityLightsBokeh(let p),
+             .closedFlowParticles(let p), .constellationDrift(let p), .crystalLattice(let p),
+             .dataMesh(let p), .digitalSand(let p), .electricStorm(let p), .sdfTunnel(let p),
+             .feedbackSynth(let p), .fireworksShow(let p), .fluidNodes(let p), .fourierKnots(let p),
+             .guillocheRose(let p), .growingNetwork(let p), .instancedGeometry(let p),
+             .inkInWater(let p), .laserRibbons(let p), .luminousBubbles(let p),
+             .metaballField(let p), .moireRings(let p), .neonVortex(let p),
+             .origamiTessellation(let p), .particleFountain(let p), .penroseTiling(let p),
+             .pulseNetwork(let p), .radialOscilloscope(let p), .rainCurtain(let p),
+             .ribbonCascade(let p), .sakuraDrift(let p), .scanlineTopography(let p),
+             .schoolingSwarm(let p), .snowfallDepth(let p), .solarCorona(let p),
+             .truchetFlow(let p), .underwaterCaustics(let p), .volumetricNebula(let p),
+             .waveTerrain(let p), .wireframeMorph(let p), .proceduralPattern(_, let p):
+            return proceduralPatternRenderer.makeVertices(family: parameters.rendererFamily,
+                parameters: p, seed: seed, frameIndex: frameIndex, clock: clock, drawableSize: drawableSize)
+        }
     }
 }
 

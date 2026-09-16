@@ -19,6 +19,7 @@ class VideoWindowController {
     private var playbackSessions: [URL: VideoPlaybackSession] = [:]
     private var sessionTask: Task<Void, Never>?
     private var isPlaybackSuspended = false
+    private var coveredDisplayIDs: Set<String> = []
     
     init(videoURL: URL) {
         assignment = DisplayVideoAssignment(defaultVideoURL: videoURL, videoURLByDisplayID: [:])
@@ -36,9 +37,11 @@ class VideoWindowController {
         sessionTask?.cancel()
 
         let requestedAssignment = assignment
+        let requestedURLs = Set(NSScreen.screens.map { requestedAssignment.videoURL(for: $0) })
         sessionTask = Task { [weak self] in
             var sessionsByURL: [URL: VideoPlaybackSession] = [:]
-            for videoURL in Set([requestedAssignment.defaultVideoURL] + Array(requestedAssignment.videoURLByDisplayID.values)) {
+            for videoURL in requestedURLs {
+                guard !Task.isCancelled else { break }
                 guard let session = await VideoPlaybackSession(videoURL: videoURL) else {
                     os_log("VideoPlaybackSession を生成できませんでした: videoURL=%@", videoURL.path)
                     continue
@@ -71,12 +74,30 @@ class VideoWindowController {
 
     /// 画面スリープやフルスクリーン表示など、壁紙が見えない状況では再生を止める
     func setPlaybackSuspended(_ suspended: Bool) {
+        setPlaybackVisibility(screensAreSleeping: suspended, coveredDisplayIDs: [])
+    }
+
+    func setPlaybackVisibility(screensAreSleeping: Bool, coveredDisplayIDs: Set<String>) {
         DispatchQueue.main.async {
-            guard self.isPlaybackSuspended != suspended else { return }
-            self.isPlaybackSuspended = suspended
-            for session in self.playbackSessions.values {
-                suspended ? session.pause() : session.play()
-            }
+            guard self.isPlaybackSuspended != screensAreSleeping ||
+                    self.coveredDisplayIDs != coveredDisplayIDs else { return }
+            self.isPlaybackSuspended = screensAreSleeping
+            self.coveredDisplayIDs = coveredDisplayIDs
+            self.applyPlaybackVisibility()
+        }
+    }
+
+    private func applyPlaybackVisibility() {
+        let videoURLs = Dictionary(uniqueKeysWithValues: NSScreen.screens.map {
+            (DisplayIdentifier.id(for: $0), assignment.videoURL(for: $0))
+        })
+        let suspendedURLs = PlaybackSuspensionPolicy.suspendedVideoURLs(
+            videoURLByDisplayID: videoURLs,
+            coveredDisplayIDs: coveredDisplayIDs,
+            screensAreSleeping: isPlaybackSuspended
+        )
+        for (url, session) in playbackSessions {
+            suspendedURLs.contains(url) ? session.pause() : session.play()
         }
     }
     
@@ -110,9 +131,7 @@ class VideoWindowController {
         playbackSessions = sessionsByURL
         windowItems = newItems
         newItems.forEach { $0.show() }
-        if !isPlaybackSuspended {
-            sessionsByURL.values.forEach { $0.play() }
-        }
+        applyPlaybackVisibility()
     }
 
     private func closePlaybackSession() {

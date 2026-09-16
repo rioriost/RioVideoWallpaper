@@ -16,14 +16,16 @@ struct ExportedVideoSummary: Equatable {
 
 enum ExportedVideoValidator {
     static func validate(url: URL, expected settings: ExportSettings) async throws -> ExportedVideoSummary {
+        try Task.checkCancellation()
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw ExportedVideoValidationError.missingFile
         }
 
-        let normalizedSettings = settings.normalizedForExport()
+        let normalizedSettings = try settings.validatedForExport()
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration)
         let tracks = try await asset.loadTracks(withMediaType: .video)
+        try Task.checkCancellation()
 
         guard let videoTrack = tracks.first else {
             throw ExportedVideoValidationError.missingVideoTrack
@@ -48,8 +50,9 @@ enum ExportedVideoValidator {
             )
         }
 
-        let expectedDuration = normalizedSettings.loopSeconds
-        let durationTolerance = max(0.15, 2.0 / Double(normalizedSettings.fps))
+        let clock = RenderClock(fps: normalizedSettings.fps, loopSeconds: normalizedSettings.loopSeconds)
+        let expectedDuration = clock.durationSeconds
+        let durationTolerance = max(0.02, 0.5 / Double(normalizedSettings.fps))
         guard abs(durationSeconds - expectedDuration) <= durationTolerance else {
             throw ExportedVideoValidationError.unexpectedDuration(
                 expectedSeconds: expectedDuration,
@@ -57,19 +60,16 @@ enum ExportedVideoValidator {
             )
         }
 
-        let frameCount = try await countVideoSamples(url: url)
-        let expectedFrameCount = RenderClock(
-            fps: normalizedSettings.fps,
-            loopSeconds: normalizedSettings.loopSeconds
-        ).totalFrames
-        let acceptableFrameCounts = acceptableFrameCountRange(expectedFrameCount: expectedFrameCount)
-        guard acceptableFrameCounts.contains(frameCount) else {
+        let frameCount = try await countVideoSamples(url: url, clock: clock)
+        let expectedFrameCount = clock.totalFrames
+        guard frameCount == expectedFrameCount else {
             throw ExportedVideoValidationError.unexpectedFrameCount(
                 expected: expectedFrameCount,
                 actual: frameCount
             )
         }
 
+        try Task.checkCancellation()
         return ExportedVideoSummary(
             width: actualWidth,
             height: actualHeight,
@@ -79,7 +79,7 @@ enum ExportedVideoValidator {
         )
     }
 
-    private static func countVideoSamples(url: URL) async throws -> Int {
+    private static func countVideoSamples(url: URL, clock: RenderClock) async throws -> Int {
         let asset = AVURLAsset(url: url)
         let tracks = try await asset.loadTracks(withMediaType: .video)
         guard let videoTrack = tracks.first else {
@@ -87,6 +87,9 @@ enum ExportedVideoValidator {
         }
 
         let reader = try AVAssetReader(asset: asset)
+        defer {
+            if reader.status == .reading { reader.cancelReading() }
+        }
         let output = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: nil)
         output.alwaysCopiesSampleData = false
 
@@ -100,8 +103,21 @@ enum ExportedVideoValidator {
         }
 
         var frameCount = 0
-        while output.copyNextSampleBuffer() != nil {
-            frameCount += 1
+        while let buffer = output.copyNextSampleBuffer() {
+            try Task.checkCancellation()
+            // AVAssetReader also emits zero-sample control buffers; those are not video frames.
+            for sample in 0..<CMSampleBufferGetNumSamples(buffer) {
+                var timing = CMSampleTimingInfo()
+                let status = CMSampleBufferGetSampleTimingInfo(buffer, at: sample, timingInfoOut: &timing)
+                let actualTime = timing.presentationTimeStamp.seconds
+                let expectedTime = Double(frameCount) / Double(clock.fps)
+                guard status == noErr, actualTime.isFinite, abs(actualTime - expectedTime) < 0.002 else {
+                    throw ExportedVideoValidationError.unexpectedFrameTiming(
+                        expectedSeconds: expectedTime, actualSeconds: actualTime
+                    )
+                }
+                frameCount += 1
+            }
         }
 
         if reader.status == .failed || reader.status == .cancelled {
@@ -109,10 +125,6 @@ enum ExportedVideoValidator {
         }
 
         return frameCount
-    }
-
-    private static func acceptableFrameCountRange(expectedFrameCount: Int) -> ClosedRange<Int> {
-        expectedFrameCount...(expectedFrameCount + 4)
     }
 }
 
@@ -123,6 +135,7 @@ enum ExportedVideoValidationError: LocalizedError {
     case unexpectedDimensions(expectedWidth: Int, expectedHeight: Int, actualWidth: Int, actualHeight: Int)
     case unexpectedDuration(expectedSeconds: Double, actualSeconds: Double)
     case unexpectedFrameCount(expected: Int, actual: Int)
+    case unexpectedFrameTiming(expectedSeconds: Double, actualSeconds: Double)
     case sampleReaderFailed(Error?)
 
     var errorDescription: String? {
@@ -139,6 +152,8 @@ enum ExportedVideoValidationError: LocalizedError {
             return "The exported video duration is \(actualSeconds) seconds, expected \(expectedSeconds) seconds."
         case .unexpectedFrameCount(let expected, let actual):
             return "The exported video contains \(actual) frames, expected \(expected) frames."
+        case .unexpectedFrameTiming(let expected, let actual):
+            return "The exported video frame is timed at \(actual) seconds, expected \(expected) seconds."
         case .sampleReaderFailed(let error):
             return error?.localizedDescription ?? "The exported video samples could not be read."
         }

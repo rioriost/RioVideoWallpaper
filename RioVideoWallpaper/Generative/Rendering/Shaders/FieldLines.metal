@@ -63,7 +63,7 @@ fragment float4 fieldLinesFadeFragment(
     sampler textureSampler [[sampler(0)]],
     constant float &fadeFactor [[buffer(0)]]
 ) {
-    return previousTexture.sample(textureSampler, input.uv) * fadeFactor;
+    return float4(previousTexture.sample(textureSampler, input.uv).rgb * fadeFactor, 1.0);
 }
 
 fragment float4 fieldLinesCopyFragment(
@@ -71,5 +71,5 @@ fragment float4 fieldLinesCopyFragment(
     texture2d<float> texture [[texture(0)]],
     sampler textureSampler [[sampler(0)]]
 ) {
-    return texture.sample(textureSampler, input.uv);
+    return float4(texture.sample(textureSampler, input.uv).rgb, 1.0);
 }

@@ -26,6 +26,10 @@ struct ExportSettings: Codable, Equatable {
     static let minimumFPS = 1
     static let minimumLoopSeconds = 0.1
     static let minimumWarmupLoops = 0
+    static let maximumDimension = 8192
+    static let maximumFPS = 120
+    static let maximumLoopSeconds = 600.0
+    static let maximumWarmupLoops = 4
 
     var width: Int
     var height: Int
@@ -47,14 +51,60 @@ struct ExportSettings: Codable, Equatable {
 
     func normalizedForExport() -> ExportSettings {
         ExportSettings(
-            width: max(Self.minimumWidth, width),
-            height: max(Self.minimumHeight, height),
-            fps: max(Self.minimumFPS, fps),
-            loopSeconds: max(Self.minimumLoopSeconds, loopSeconds),
+            width: min(Self.maximumDimension, max(Self.minimumWidth, width)),
+            height: min(Self.maximumDimension, max(Self.minimumHeight, height)),
+            fps: min(Self.maximumFPS, max(Self.minimumFPS, fps)),
+            loopSeconds: loopSeconds.isFinite
+                ? min(Self.maximumLoopSeconds, max(Self.minimumLoopSeconds, loopSeconds))
+                : Self.minimumLoopSeconds,
             codec: codec,
             quality: quality,
-            warmupLoops: max(Self.minimumWarmupLoops, warmupLoops)
+            warmupLoops: min(Self.maximumWarmupLoops, max(Self.minimumWarmupLoops, warmupLoops))
         )
+    }
+
+    func validatedForExport() throws -> ExportSettings {
+        guard width <= Self.maximumDimension, height <= Self.maximumDimension else {
+            throw ExportSettingsError.unsupportedDimensions
+        }
+        guard loopSeconds.isFinite, loopSeconds <= Self.maximumLoopSeconds,
+              fps <= Self.maximumFPS, warmupLoops <= Self.maximumWarmupLoops else {
+            throw ExportSettingsError.unsupportedTiming
+        }
+        return normalizedForExport()
+    }
+
+    func estimatedBitRate() throws -> Int {
+        let settings = try validatedForExport()
+        let pixels = settings.width.multipliedReportingOverflow(by: settings.height)
+        let samples = pixels.partialValue.multipliedReportingOverflow(by: settings.fps)
+        guard !pixels.overflow, !samples.overflow else {
+            throw ExportSettingsError.unsupportedDimensions
+        }
+        let bitsPerPixel: Double
+        switch quality {
+        case .draft: bitsPerPixel = 0.08
+        case .high: bitsPerPixel = 0.16
+        case .archive: bitsPerPixel = 0.28
+        }
+        return Int(min(400_000_000, max(2_000_000, Double(samples.partialValue) * bitsPerPixel)))
+    }
+}
+
+enum ExportSettingsError: LocalizedError {
+    case unsupportedDimensions
+    case unsupportedTiming
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedDimensions:
+            return AppLocalization.format("Video dimensions must not exceed %ld pixels per side.", ExportSettings.maximumDimension)
+        case .unsupportedTiming:
+            return AppLocalization.format(
+                "Video timing must be finite and within %ld fps, %ld seconds, and %ld warmup loops.",
+                ExportSettings.maximumFPS, Int(ExportSettings.maximumLoopSeconds), ExportSettings.maximumWarmupLoops
+            )
+        }
     }
 }
 

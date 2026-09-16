@@ -13,21 +13,21 @@ struct MetalPreviewView: NSViewRepresentable {
     var seed: UInt64
     var exportSettings: ExportSettings
     var isPlaying: Bool
-    var requestedFrameIndex: Int?
+    var seekRequest: PreviewSeekRequest?
 
     init(
         parameters: RenderParameters,
         seed: UInt64,
         exportSettings: ExportSettings,
         isPlaying: Bool = true,
-        requestedFrameIndex: Int? = nil,
-        clearColor: MTLClearColor = MTLClearColor(red: 0.03, green: 0.06, blue: 0.09, alpha: 1.0)
+        seekRequest: PreviewSeekRequest? = nil,
+        clearColor: MTLClearColor = GenerativeRenderStyle.backgroundColor
     ) {
         self.parameters = parameters
         self.seed = seed
         self.exportSettings = exportSettings
         self.isPlaying = isPlaying
-        self.requestedFrameIndex = requestedFrameIndex
+        self.seekRequest = seekRequest
         self.clearColor = clearColor
     }
 
@@ -50,7 +50,7 @@ struct MetalPreviewView: NSViewRepresentable {
             seed: seed,
             exportSettings: exportSettings,
             isPlaying: isPlaying,
-            requestedFrameIndex: requestedFrameIndex
+            seekRequest: seekRequest
         )
         context.coordinator.attach(to: view)
         return view
@@ -64,8 +64,14 @@ struct MetalPreviewView: NSViewRepresentable {
             seed: seed,
             exportSettings: exportSettings,
             isPlaying: isPlaying,
-            requestedFrameIndex: requestedFrameIndex
+            seekRequest: seekRequest
         )
+    }
+
+    static func dismantleNSView(_ view: MTKView, coordinator: Coordinator) {
+        view.isPaused = true
+        view.delegate = nil
+        coordinator.detach()
     }
 }
 
@@ -73,16 +79,15 @@ extension MetalPreviewView {
     final class Coordinator: NSObject, MTKViewDelegate {
         let device: MTLDevice?
         private let commandQueue: MTLCommandQueue?
-        private var renderer: GenerativeFrameRenderer?
+        private let worker: PreviewRenderWorker?
+        private let renderingQueue = DispatchQueue(label: "RioVideoWallpaper.preview", qos: .userInitiated)
+        private var renderingJob: PreviewRenderJob?
+        private var renderRevision = 0
         private var parameters = RenderParameters.fieldLines(.feasibilityStudyDefault)
         private var seed: UInt64 = 1
         private var exportSettings = ExportSettings.standard
         private var isPlaying = true
-        private var requestedFrameIndex: Int?
-        private var lastAppliedRequestedFrameIndex: Int?
-        private var frameIndex = 0
-        private var playbackFrameOffset = 0
-        private var playbackStartTime = CACurrentMediaTime()
+        private var playback = PreviewPlaybackState()
         private weak var view: MTKView?
         private weak var observedWindow: NSWindow?
         private var windowObservers: [NSObjectProtocol] = []
@@ -90,10 +95,17 @@ extension MetalPreviewView {
         override init() {
             device = MTLCreateSystemDefaultDevice()
             commandQueue = device?.makeCommandQueue()
+            if let device, let commandQueue {
+                worker = PreviewRenderWorker(device: device, commandQueue: commandQueue)
+            } else {
+                worker = nil
+            }
             super.init()
+            playback.reset(at: CACurrentMediaTime())
         }
 
         deinit {
+            renderingJob?.cancel()
             removeWindowObservers()
         }
 
@@ -103,90 +115,162 @@ extension MetalPreviewView {
             updatePausedState(redrawPausedFrame: false)
         }
 
+        func detach() {
+            invalidateRendering()
+            renderingJob = nil
+            view = nil
+            observedWindow = nil
+            removeWindowObservers()
+        }
+
         func update(
             parameters: RenderParameters,
             seed: UInt64,
             exportSettings: ExportSettings,
             isPlaying: Bool,
-            requestedFrameIndex: Int?
+            seekRequest: PreviewSeekRequest?
         ) {
-            let wasPlaying = self.isPlaying
+            let now = CACurrentMediaTime()
             if seed != self.seed ||
-                parameters.rendererFamily != self.parameters.rendererFamily ||
+                parameters != self.parameters ||
                 exportSettings.fps != self.exportSettings.fps ||
-                exportSettings.loopSeconds != self.exportSettings.loopSeconds {
-                renderer?.resetAccumulation()
-                frameIndex = 0
-                playbackFrameOffset = 0
-                playbackStartTime = CACurrentMediaTime()
-                lastAppliedRequestedFrameIndex = nil
+                exportSettings.loopSeconds != self.exportSettings.loopSeconds ||
+                exportSettings.warmupLoops != self.exportSettings.warmupLoops {
+                invalidateRendering()
+                playback.reset(at: now)
             }
             self.parameters = parameters
             self.seed = seed
             self.exportSettings = exportSettings
             self.isPlaying = isPlaying
-            self.requestedFrameIndex = requestedFrameIndex
-            if wasPlaying != isPlaying {
-                let clock = RenderClock(fps: exportSettings.fps, loopSeconds: exportSettings.loopSeconds)
-                if isPlaying {
-                    playbackFrameOffset = frameIndex
-                    playbackStartTime = CACurrentMediaTime()
-                } else {
-                    frameIndex = currentPlaybackFrame(clock: clock)
-                    playbackFrameOffset = frameIndex
-                }
+            let clock = RenderClock(fps: exportSettings.fps, loopSeconds: exportSettings.loopSeconds)
+            playback.setPlaying(isPlaying, at: now, clock: clock)
+            if playback.apply(seekRequest, at: now, clock: clock) {
+                invalidateRendering()
             }
             updatePausedState(redrawPausedFrame: true)
         }
 
-        func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+        func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+            guard Thread.isMainThread else {
+                DispatchQueue.main.async { [weak self, weak view] in
+                    if let view { self?.mtkView(view, drawableSizeWillChange: size) }
+                }
+                return
+            }
+            guard self.view === view else { return }
+            let clock = RenderClock(fps: exportSettings.fps, loopSeconds: exportSettings.loopSeconds)
+            playback.rebase(at: CACurrentMediaTime(), clock: clock)
+            invalidateRendering()
+        }
+
+        private func invalidateRendering() {
+            renderRevision &+= 1
+            renderingJob?.cancel()
+        }
 
         func draw(in view: MTKView) {
+            guard Thread.isMainThread else {
+                DispatchQueue.main.async { [weak self, weak view] in
+                    if let view { self?.draw(in: view) }
+                }
+                return
+            }
+            guard self.view === view else { return }
             refreshWindowObserversIfNeeded()
             guard isVisibleForRendering(view) else {
                 updatePausedState(redrawPausedFrame: false)
                 return
             }
 
-            guard let commandQueue,
-                  let commandBuffer = commandQueue.makeCommandBuffer(),
-                  let renderPassDescriptor = view.currentRenderPassDescriptor,
-                  let drawable = view.currentDrawable else {
-                return
-            }
-
-            if renderer == nil, let device = view.device {
-                renderer = try? GenerativeFrameRenderer(device: device, colorPixelFormat: view.colorPixelFormat)
-            }
-
+            guard renderingJob == nil, let worker else { return }
             let clock = RenderClock(fps: exportSettings.fps, loopSeconds: exportSettings.loopSeconds)
-            if requestedFrameIndex != lastAppliedRequestedFrameIndex, let requestedFrameIndex {
-                frameIndex = clock.wrappedFrameIndex(requestedFrameIndex)
-                playbackFrameOffset = frameIndex
-                playbackStartTime = CACurrentMediaTime()
-                renderer?.resetAccumulation()
-                lastAppliedRequestedFrameIndex = requestedFrameIndex
-            } else if isPlaying {
-                frameIndex = currentPlaybackFrame(clock: clock)
-            }
-
-            renderer?.render(
-                parameters: parameters,
-                seed: seed,
-                frameIndex: frameIndex,
-                clock: clock,
-                in: view,
-                commandBuffer: commandBuffer,
-                renderPassDescriptor: renderPassDescriptor
+            let request = PreviewRenderWorker.Request(
+                parameters: parameters, seed: seed, settings: exportSettings,
+                frameIndex: playback.frame(at: CACurrentMediaTime(), clock: clock),
+                size: view.drawableSize, revision: renderRevision
             )
-            commandBuffer.present(drawable)
-            commandBuffer.commit()
+            guard request.size.width >= 2, request.size.height >= 2 else { return }
+            let job = PreviewRenderJob()
+            renderingJob = job
+            renderingQueue.async { [weak self, weak view] in
+                let result = Result { try worker.render(request, job: job) }
+                DispatchQueue.main.async {
+                    guard let self, let view, self.view === view, self.renderingJob === job else { return }
+                    self.renderingJob = nil
+                    guard request.revision == self.renderRevision else {
+                        if self.isVisibleForRendering(view) { view.draw() }
+                        return
+                    }
+                    guard self.isVisibleForRendering(view) else { return }
+                    let clock = RenderClock(fps: self.exportSettings.fps, loopSeconds: self.exportSettings.loopSeconds)
+                    if !self.isPlaying && request.frameIndex != self.playback.frame(at: CACurrentMediaTime(), clock: clock) {
+                        view.draw()
+                        return
+                    }
+                    do {
+                        let (renderer, texture) = try result.get()
+                        guard let command = self.commandQueue?.makeCommandBuffer(),
+                              let pass = view.currentRenderPassDescriptor,
+                              let drawable = view.currentDrawable else { return }
+                        try renderer.present(texture, descriptor: pass, commandBuffer: command)
+                        command.addCompletedHandler { [weak self, weak view] buffer in
+                            guard let error = buffer.error else { return }
+                            DispatchQueue.main.async {
+                                guard let self, let view, self.view === view,
+                                      self.renderRevision == request.revision else { return }
+                                self.invalidateRendering()
+                                view.isPaused = true
+                                NSLog("Generative preview presentation failed: %@", error.localizedDescription)
+                            }
+                        }
+                        command.present(drawable)
+                        command.commit()
+                    } catch {
+                        self.invalidateRendering()
+                        view.isPaused = true
+                        NSLog("Generative preview rendering failed: %@", error.localizedDescription)
+                    }
+                }
+            }
         }
 
-        private func currentPlaybackFrame(clock: RenderClock) -> Int {
-            let elapsedSeconds = max(0, CACurrentMediaTime() - playbackStartTime)
-            let elapsedFrames = Int((elapsedSeconds * Double(clock.fps)).rounded(.down))
-            return clock.wrappedFrameIndex(playbackFrameOffset + elapsedFrames)
+        private final class PreviewRenderWorker {
+            // Mutable render state belongs to renderingQueue; presentation precedes the next queued job.
+            struct Request {
+                var parameters: RenderParameters
+                var seed: UInt64
+                var settings: ExportSettings
+                var frameIndex: Int
+                var size: CGSize
+                var revision: Int
+            }
+
+            private let device: MTLDevice
+            private let commandQueue: MTLCommandQueue
+            private var renderer: GenerativeRenderSession?
+            private var revision: Int?
+
+            init(device: MTLDevice, commandQueue: MTLCommandQueue) {
+                self.device = device
+                self.commandQueue = commandQueue
+            }
+
+            func render(_ request: Request, job: PreviewRenderJob) throws -> (GenerativeRenderSession, MTLTexture) {
+                try job.checkCancellation()
+                if renderer == nil { renderer = try GenerativeRenderSession(device: device) }
+                guard let renderer else { throw RenderEncodingError.textureCreationFailed }
+                if revision != request.revision {
+                    renderer.reset()
+                    revision = request.revision
+                }
+                let texture = try renderer.render(
+                    parameters: request.parameters, seed: request.seed, frameIndex: request.frameIndex,
+                    settings: request.settings, drawableSize: request.size, commandQueue: commandQueue,
+                    checkCancellation: job.checkCancellation
+                )
+                return (renderer, texture)
+            }
         }
 
         private func refreshWindowObserversIfNeeded() {
@@ -229,6 +313,8 @@ extension MetalPreviewView {
             }
 
             let shouldRenderContinuously = isPlaying && isVisibleForRendering(view)
+            let clock = RenderClock(fps: exportSettings.fps, loopSeconds: exportSettings.loopSeconds)
+            playback.setSuspended(!isVisibleForRendering(view), at: CACurrentMediaTime(), clock: clock)
             view.isPaused = !shouldRenderContinuously
             view.preferredFramesPerSecond = ProcessInfo.processInfo.isLowPowerModeEnabled ? 30 : 60
 

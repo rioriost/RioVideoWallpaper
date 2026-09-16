@@ -30,8 +30,14 @@ enum WallpaperProjectSanitizer {
         let originalVisualIntent = project.visualIntent
         let originalOutputVideoPath = project.assets.outputVideoPath
 
-        let capabilities = RendererCapabilities.capabilities(for: project.rendererFamily)
+        sanitizedProject.rendererFamily = project.renderParameters.rendererFamily
+        let capabilities = RendererCapabilities.capabilities(for: sanitizedProject.rendererFamily)
         sanitizedProject.exportSettings = project.exportSettings.normalizedForExport()
+        sanitizedProject.renderParameters = sanitizedRenderParameters(
+            project.renderParameters,
+            capabilities: capabilities,
+            reducedMotion: reducedMotion
+        )
 
         if let visualIntent = project.visualIntent,
            let normalizedIntent = try? VisualIntentValidator.normalized(
@@ -40,22 +46,8 @@ enum WallpaperProjectSanitizer {
             reducedMotion: reducedMotion
            ) {
             sanitizedProject.visualIntent = normalizedIntent
-            sanitizedProject.renderParameters = IntentToRenderParametersMapper.renderParameters(
-                from: normalizedIntent,
-                capabilities: capabilities,
-                reducedMotion: reducedMotion
-            )
-            sanitizedProject.exportSettings = IntentToRenderParametersMapper.exportSettings(
-                sanitizedProject.exportSettings,
-                applying: normalizedIntent
-            )
         } else {
             sanitizedProject.visualIntent = nil
-            sanitizedProject.renderParameters = sanitizedRenderParameters(
-                project.renderParameters,
-                capabilities: capabilities,
-                reducedMotion: reducedMotion
-            )
         }
 
         let adjustedRenderParameters = sanitizedProject.renderParameters != originalRenderParameters
@@ -64,8 +56,11 @@ enum WallpaperProjectSanitizer {
         let removedVisualIntent = originalVisualIntent != nil && sanitizedProject.visualIntent == nil
         let madeChanges = adjustedRenderParameters || adjustedExportSettings || adjustedVisualIntent || removedVisualIntent
 
-        if madeChanges {
+        let renderingChanged = adjustedRenderParameters || adjustedExportSettings
+        if renderingChanged {
             sanitizedProject.assets.outputVideoPath = nil
+        }
+        if madeChanges {
             sanitizedProject.updatedAt = Date()
         }
 
@@ -75,7 +70,7 @@ enum WallpaperProjectSanitizer {
             adjustedExportSettings: adjustedExportSettings,
             adjustedVisualIntent: adjustedVisualIntent,
             removedVisualIntent: removedVisualIntent,
-            invalidatedOutputVideo: madeChanges && originalOutputVideoPath != nil
+            invalidatedOutputVideo: renderingChanged && originalOutputVideoPath != nil
         )
     }
 

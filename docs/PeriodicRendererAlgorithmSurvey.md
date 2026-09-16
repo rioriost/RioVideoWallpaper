@@ -2,12 +2,14 @@
 
 This document collects renderer families that can expand RioVideoWallpaper's visual vocabulary while preserving seamless loop semantics. The goal is not to make OpenAI invent shader parameters, but to expose a rich, bounded catalog of renderer families, loop models, and parameter ranges that the app can validate and render deterministically.
 
+> **Current exception:** Field Lines and Orbital have periodic geometry but **no exact framebuffer-periodicity guarantee after finite trail warmup**. Their catalog contracts report `isExactlyPeriodic = false`. The other 65 families use stateless periodic signals; the distinction is detailed in [Renderer Loop Mathematical Verification](RendererLoopMathematicalVerification.md).
+
 ## Core Constraint
 
 A generated wallpaper should be a periodic signal, not an arbitrary finite simulation. Duration is therefore not an independent creative parameter in the general case. It should be derived from:
 
 - The renderer's fundamental period.
-- Integer or rational frequency ratios.
+- Integer temporal frequency ratios, or rational ratios whose denominator is included in the complete chosen loop period.
 - FPS.
 - Speed or phase increment.
 - Any temporal subdivision such as beat count, orbit count, automaton step count, or noise phase cycle.
@@ -19,6 +21,14 @@ Renderers that diffuse, decay, explode, or converge indefinitely can still be us
 - Use periodic boundary conditions and a fixed cycle length.
 - Render a precomputed state cycle.
 - Restrict parameters to known periodic regimes.
+
+## Current Implementation Contract
+
+The current 67-family implementation is audited in [Renderer Loop Mathematical Verification](RendererLoopMathematicalVerification.md). A wrapped clock alone is not evidence of continuity. Spatial frequencies and seed offsets may be fractional, but the coefficient multiplying unwrapped time must close over the selected loop period. Falling particles use integer lifetime counts and fade at wrapping domain edges.
+
+Field Lines and Orbital retain stateful trails, so their **geometry** is periodic while finite warmup does not promise exact framebuffer steady state. The catalog reports that distinction. Preview, thumbnail, and export share logical-frame advancement; repeated presentation cannot advance trails.
+
+Exports are staged beside the destination and published only after validation and a cancellation check. The output contains exactly `round(fps * loopSeconds)` video samples at `i/fps`, without a duplicated endpoint or frame reordering. Zero-sample reader control buffers are not counted as frames. Supported limits are 8192 pixels per dimension, 120 fps, 600 seconds, and four warmup loops; native display presets through 8K remain within those bounds. The duration bound preserves the editor's existing 56-second Fireworks/Schooling cycles and their 560-second duration at minimum speed.
 
 ## Renderer Catalog
 

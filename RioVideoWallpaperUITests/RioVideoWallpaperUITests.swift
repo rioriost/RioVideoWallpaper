@@ -9,6 +9,7 @@ import XCTest
 
 final class RioVideoWallpaperUITests: XCTestCase {
     private var runningApplication: XCUIApplication?
+    private var testLibraryURL: URL?
 
     override func setUpWithError() throws {
         // Put setup code here. This method is called before the invocation of each test method in the class.
@@ -22,12 +23,16 @@ final class RioVideoWallpaperUITests: XCTestCase {
     override func tearDownWithError() throws {
         runningApplication?.terminate()
         runningApplication = nil
+        if let testLibraryURL {
+            try FileManager.default.removeItem(at: testLibraryURL)
+            self.testLibraryURL = nil
+        }
     }
 
     @MainActor
     func testExample() throws {
         // UI tests must launch the application that they test.
-        let app = makeApplication()
+        let app = try makeApplication()
         app.launch()
 
         // Use XCTAssert and related functions to verify your tests produce the correct results.
@@ -35,37 +40,38 @@ final class RioVideoWallpaperUITests: XCTestCase {
 
     @MainActor
     func testGenerativeEditorOpensFromLaunchEnvironment() throws {
-        let app = makeApplication()
+        let app = try makeApplication()
         app.launchEnvironment["VIDEO_WALLPAPER_OPEN_GENERATIVE_EDITOR"] = "1"
         app.launch()
 
-        let window = app.windows["RioVideoWallpaper"]
-        XCTAssertTrue(window.waitForExistence(timeout: 5))
-        XCTAssertTrue(window.buttons["Export..."].exists)
-        XCTAssertTrue(window.buttons["Set as Wallpaper"].exists)
-        XCTAssertTrue(window.buttons["Set on Display..."].exists)
-        XCTAssertTrue(window.buttons["Remove orphaned generated assets"].exists)
-        XCTAssertTrue(window.buttons["Pause"].exists || window.buttons["Play"].exists)
-        XCTAssertTrue(window.buttons["Go To End"].exists)
-        XCTAssertTrue(window.buttons["Go To Start"].exists)
-        XCTAssertTrue(window.buttons["Preview Loop Seam"].exists)
-        XCTAssertTrue(window.staticTexts["Renderer"].exists)
-        XCTAssertTrue(window.staticTexts["Provider"].exists)
-        XCTAssertTrue(window.staticTexts["Intent"].exists)
+        let exportButton = app.buttons["export-video"]
+        XCTAssertTrue(exportButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["preview-first-frame"].exists)
+        XCTAssertTrue(app.buttons["preview-play-pause"].exists)
+        XCTAssertFalse(app.staticTexts["Provider"].exists)
+        XCTAssertFalse(app.staticTexts["Intent"].exists)
+        app.buttons["preview-first-frame"].click()
+        app.buttons["preview-play-pause"].click()
+        app.buttons["preview-first-frame"].click()
     }
 
     @MainActor
     func testLaunchSmoke() throws {
-        let app = makeApplication()
+        let app = try makeApplication()
         app.launch()
         let launched = app.wait(for: .runningForeground, timeout: 2) ||
             app.wait(for: .runningBackground, timeout: 2)
         XCTAssertTrue(launched)
     }
 
-    private func makeApplication() -> XCUIApplication {
+    private func makeApplication() throws -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["VIDEO_WALLPAPER_UI_TESTING"] = "1"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("RioVideoWallpaperUITests-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        testLibraryURL = root
+        app.launchEnvironment["VIDEO_WALLPAPER_TEST_LIBRARY_ROOT"] = root.path
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         runningApplication = app
         return app
     }

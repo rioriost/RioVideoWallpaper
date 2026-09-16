@@ -54,4 +54,5 @@ struct PromptEntry: Codable, Equatable, Identifiable {
 struct ProjectAssets: Codable, Equatable {
     var thumbnailPath: String?
     var outputVideoPath: String?
+    var libraryRootPath: String? = nil
 }

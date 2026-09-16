@@ -8,10 +8,16 @@ import Foundation
 struct RenderClock: Equatable {
     let fps: Int
     let loopSeconds: Double
+    let wrapsTime: Bool
+    let frameOffset: Double
 
-    init(fps: Int, loopSeconds: Double) {
-        self.fps = max(1, fps)
-        self.loopSeconds = max(0.1, loopSeconds)
+    init(fps: Int, loopSeconds: Double, wrapsTime: Bool = true, frameOffset: Double = 0) {
+        self.fps = min(ExportSettings.maximumFPS, max(1, fps))
+        self.loopSeconds = loopSeconds.isFinite
+            ? min(ExportSettings.maximumLoopSeconds, max(0.1, loopSeconds))
+            : ExportSettings.minimumLoopSeconds
+        self.wrapsTime = wrapsTime
+        self.frameOffset = frameOffset.isFinite ? frameOffset : 0
     }
 
     var totalFrames: Int {
@@ -19,8 +25,8 @@ struct RenderClock: Equatable {
     }
 
     func normalizedLoopTime(frameIndex: Int) -> Double {
-        let frame = wrappedFrameIndex(frameIndex)
-        return Double(frame) / Double(totalFrames)
+        let frame = wrapsTime ? wrappedFrameIndex(frameIndex) : frameIndex
+        return (Double(frame) + frameOffset) / Double(totalFrames)
     }
 
     func phase(frameIndex: Int) -> Double {
@@ -38,7 +44,11 @@ struct RenderClock: Equatable {
     }
 
     func warmupFrameIndices(warmupLoops: Int) -> Range<Int> {
-        let warmupFrames = max(0, warmupLoops) * totalFrames
+        let warmupFrames = min(ExportSettings.maximumWarmupLoops, max(0, warmupLoops)) * totalFrames
         return -warmupFrames..<0
+    }
+
+    var durationSeconds: Double {
+        Double(totalFrames) / Double(fps)
     }
 }

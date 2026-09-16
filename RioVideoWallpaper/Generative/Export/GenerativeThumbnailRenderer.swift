@@ -14,12 +14,19 @@ enum GenerativeThumbnailRenderer {
         case commandBufferCreationFailed
         case textureCreationFailed
         case imageCreationFailed
+        case invalidSize
     }
 
     static func renderPNG(
         project: WallpaperProject,
         size: CGSize = CGSize(width: 320, height: 200)
     ) throws -> Data {
+        guard size.width.isFinite, size.height.isFinite,
+              size.width >= 2, size.height >= 2,
+              size.width <= CGFloat(ExportSettings.maximumDimension),
+              size.height <= CGFloat(ExportSettings.maximumDimension) else {
+            throw ThumbnailError.invalidSize
+        }
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw ThumbnailError.metalUnavailable
         }
@@ -42,28 +49,23 @@ enum GenerativeThumbnailRenderer {
             throw ThumbnailError.textureCreationFailed
         }
 
-        let renderer = try GenerativeFrameRenderer(device: device, colorPixelFormat: .bgra8Unorm)
-        let clock = RenderClock(fps: 30, loopSeconds: max(4.0, project.exportSettings.loopSeconds))
-
-        let warmupStep = max(1, clock.totalFrames / 30)
-        let warmupFrames = stride(from: -clock.totalFrames, to: 0, by: warmupStep)
-        let frameIndices = Array(warmupFrames) + [max(0, clock.totalFrames / 3)]
-        for frameIndex in frameIndices {
-            guard let commandBuffer = commandQueue.makeCommandBuffer() else {
-                throw ThumbnailError.commandBufferCreationFailed
-            }
-            renderer.render(
-                parameters: project.renderParameters,
-                seed: project.seed,
-                frameIndex: frameIndex,
-                clock: clock,
-                drawableSize: size,
-                outputTexture: outputTexture,
-                commandBuffer: commandBuffer
-            )
-            commandBuffer.commit()
-            commandBuffer.waitUntilCompleted()
+        let renderer = try GenerativeRenderSession(device: device)
+        let settings = try project.exportSettings.validatedForExport()
+        let clock = RenderClock(fps: settings.fps, loopSeconds: settings.loopSeconds)
+        let frame = try renderer.render(parameters: project.renderParameters, seed: project.seed,
+                                        frameIndex: clock.totalFrames / 3, settings: settings,
+                                        drawableSize: CGSize(width: pixelWidth, height: pixelHeight),
+                                        commandQueue: commandQueue)
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+            throw ThumbnailError.commandBufferCreationFailed
         }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = outputTexture
+        pass.colorAttachments[0].storeAction = .store
+        try renderer.present(frame, descriptor: pass, commandBuffer: commandBuffer)
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+        if let error = commandBuffer.error { throw error }
 
         return try pngData(from: outputTexture, width: pixelWidth, height: pixelHeight)
     }

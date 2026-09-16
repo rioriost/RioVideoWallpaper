@@ -19,6 +19,7 @@ struct RioVideoWallpaperSettingsView: View {
     @State private var loginItemStatusMessage: String?
     @State private var generatedAssetsPath = GeneratedAssetLibrary.currentRootURL.path
     @State private var generatedAssetsStatusMessage: String?
+    @StateObject private var editorDraft = GenerativeEditorDraft()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,6 +34,24 @@ struct RioVideoWallpaperSettingsView: View {
             refreshDisplayAssignments()
             startsAtLogin = appDelegate.isLoginItemEnabled()
             refreshGeneratedAssetsPath()
+        }
+        .onChange(of: selectedPane) { _, pane in
+            if pane == .general {
+                refreshDisplayAssignments()
+                startsAtLogin = appDelegate.isLoginItemEnabled()
+                refreshGeneratedAssetsPath()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+            refreshDisplayAssignments()
+            refreshGeneratedAssetsPath()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
+            refreshDisplayAssignments()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshDisplayAssignments()
+            startsAtLogin = appDelegate.isLoginItemEnabled()
         }
     }
 
@@ -119,8 +138,15 @@ struct RioVideoWallpaperSettingsView: View {
         case .generation:
             GenerativeEditorView(
                 assetLibrary: generatedAssetLibrary,
-                setWallpaper: setWallpaper,
-                setWallpaperForDisplay: setWallpaperForDisplay
+                draft: editorDraft,
+                setWallpaper: { url in
+                    setWallpaper(url)
+                    refreshDisplayAssignments()
+                },
+                setWallpaperForDisplay: { url in
+                    setWallpaperForDisplay(url)
+                    refreshDisplayAssignments()
+                }
             )
         }
     }
@@ -129,7 +155,7 @@ struct RioVideoWallpaperSettingsView: View {
         assignments = appDelegate.settingsDisplayAssignments()
         if assignments?.perDisplaySelections.isEmpty == true {
             selectedDisplayID = nil
-        } else if selectedDisplayID == nil {
+        } else if selectedDisplayID == nil || !NSScreen.screens.contains(where: { DisplayIdentifier.id(for: $0) == selectedDisplayID }) {
             selectedDisplayID = NSScreen.screens.first.map(DisplayIdentifier.id(for:))
         }
     }
@@ -174,9 +200,13 @@ struct RioVideoWallpaperSettingsView: View {
 
     private func revealGeneratedAssetsFolder() {
         let url = GeneratedAssetLibrary.currentRootURL
-        generatedAssetLibrary.withRootAccess {
-            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+        do {
+            try generatedAssetLibrary.withRootAccess {
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
+        } catch {
+            generatedAssetsStatusMessage = error.localizedDescription
         }
     }
 
