@@ -28,6 +28,10 @@ struct RioVideoWallpaperApp: App {
                 openSettings()
                 NSApp.activate(ignoringOtherApps: true)
             }
+            Link(
+                AppLocalization.string("Privacy Policy..."),
+                destination: URL(string: "https://raw.githubusercontent.com/rioriost/videowallpaper/main/docs/privacy-policy.md")!
+            )
             Divider()
             Button(AppLocalization.string("Quit RioVideoWallpaper")) {
                 NSApp.terminate(nil)
