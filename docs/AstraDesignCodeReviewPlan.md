@@ -517,9 +517,13 @@ Field Lines / Orbital は周期的な幾何信号を持つが、
 - 複数の物理ディスプレイの再接続、外部保存先の再認可などの実機組み合わせは、
   純粋な状態遷移テストだけで全環境を保証するものではない。
 
-### 公開の条件
+### 公開結果
 
-Developer ID署名用の証明書は利用可能。
-既存の公証プロファイル `AC_PROFILE` はAppleへの認証が401で失敗するため、
-認証情報が更新されて公証・staple・Gatekeeper確認が成功するまで、
-未公証バイナリを正式公開しない。
+修正コミット `9e73d07` とタグ `1.2.1` をpushした。
+初回の公証認証は401だったが、最終の既存リリース手順の実行では成功した。
+Developer ID署名の検証、公証の `Accepted`、stapleの検証、
+Gatekeeperの `Notarized Developer ID` による許可を確認してから公開した。
+
+- リリース: <https://github.com/rioriost/RioVideoWallpaper/releases/tag/1.2.1>
+- 成果物: `RioVideoWallpaper-1.2.1.zip`（Apple silicon、macOS 26以降）
+- SHA-256: `33d23bf8f5a9ff835c836fe8d65ea6c38117512349c83e5497ddb8526e43ed5b`
