@@ -647,18 +647,18 @@ struct GenerativeEditorView: View {
 
     var body: some View {
         HSplitView {
-            sidebar
-                .frame(minWidth: 280, idealWidth: 300, maxWidth: 360)
-
-            HSplitView {
-                previewPane
-                    .frame(minWidth: 480)
-                inspector
-                    .frame(width: 340)
+            ScrollView {
+                sidebar
             }
+            .frame(minWidth: 260, idealWidth: 280, maxWidth: 300)
+            .background(Color(nsColor: .windowBackgroundColor))
+
+            previewPane
+                .frame(minWidth: 340, maxWidth: .infinity)
+            inspector
+                .frame(minWidth: 320, idealWidth: 320, maxWidth: 380)
         }
-        .frame(minWidth: 1080, minHeight: 700)
-        .navigationTitle("RioVideoWallpaper")
+        .frame(minWidth: 980, minHeight: 600)
         .accessibilityIdentifier("generative-editor")
         .onAppear(perform: handleAppear)
         .onReceive(NotificationCenter.default.publisher(for: GeneratedAssetLibrary.rootDidChangeNotification)) { _ in
@@ -695,7 +695,6 @@ struct GenerativeEditorView: View {
                 guard let entry = entryPendingDeletion else { return }
                 deleteLibraryEntry(entry)
             }
-            .keyboardShortcut(.defaultAction)
             Button(AppLocalization.string("Cancel"), role: .cancel) {
                 entryPendingDeletion = nil
             }
@@ -760,24 +759,39 @@ struct GenerativeEditorView: View {
 
             Divider()
 
-            HStack(spacing: 8) {
-                Button(isExporting ? AppLocalization.string("Exporting...") : AppLocalization.string("Export")) {
+            VStack(spacing: 10) {
+                Button {
                     startLibraryExport()
+                } label: {
+                    Label(AppLocalization.string(isExporting ? "Exporting..." : "Export"), systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
                 .disabled(isExporting)
                 .accessibilityIdentifier("export-video")
 
-                Button(AppLocalization.string("Set on Display...")) {
-                    guard let url = exportedWallpaperURL else { return }
-                    applyWallpaper(url, toSingleDisplay: true)
+                Menu {
+                    Button(AppLocalization.string("Set to All Displays")) {
+                        guard let url = exportedWallpaperURL else { return }
+                        applyWallpaper(url, toSingleDisplay: false)
+                    }
+                    Button(AppLocalization.string("Set on Display...")) {
+                        guard let url = exportedWallpaperURL else { return }
+                        applyWallpaper(url, toSingleDisplay: true)
+                    }
+                } label: {
+                    Label(AppLocalization.string("Set as Wallpaper"), systemImage: "display")
                 }
                 .disabled(exportedWallpaperURL == nil || isExporting)
+                .accessibilityIdentifier("apply-wallpaper")
 
-                Button(AppLocalization.string("Set to All Displays")) {
-                    guard let url = exportedWallpaperURL else { return }
-                    applyWallpaper(url, toSingleDisplay: false)
+                if exportedWallpaperURL == nil && !isExporting {
+                    Text(AppLocalization.string("Export a video to set it as your wallpaper."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .disabled(exportedWallpaperURL == nil || isExporting)
             }
 
             Divider()
@@ -791,6 +805,7 @@ struct GenerativeEditorView: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
+                .accessibilityLabel(AppLocalization.string("Refresh history"))
                 .help(AppLocalization.string("Refresh history"))
 
                 Button {
@@ -813,9 +828,9 @@ struct GenerativeEditorView: View {
     private var historyList: some View {
         Group {
             if libraryEntries.isEmpty {
-                Text(AppLocalization.string("No saved projects"))
-                    .font(.caption)
+                Label(AppLocalization.string("No saved projects"), systemImage: "clock")
                     .foregroundStyle(.secondary)
+                    .padding(.vertical, 12)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
@@ -835,6 +850,7 @@ struct GenerativeEditorView: View {
                                     Image(systemName: "display")
                                 }
                                 .buttonStyle(.borderless)
+                                .accessibilityLabel(AppLocalization.string("Set as wallpaper"))
                                 .help(AppLocalization.string("Set as wallpaper"))
 
                                 Button {
@@ -853,6 +869,7 @@ struct GenerativeEditorView: View {
                                     Image(systemName: "trash")
                                 }
                                 .buttonStyle(.borderless)
+                                .accessibilityLabel(AppLocalization.string("Delete from history"))
                                 .help(AppLocalization.string("Delete from history"))
                             }
                         }
@@ -899,6 +916,16 @@ struct GenerativeEditorView: View {
 
     private var previewPane: some View {
         VStack(spacing: 0) {
+            HStack {
+                Text(AppLocalization.string("Preview"))
+                    .font(.headline)
+                Spacer()
+                Text("\(project.exportSettings.width) × \(project.exportSettings.height)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+
             ZStack {
                 MetalPreviewView(
                     parameters: project.renderParameters,
@@ -908,7 +935,7 @@ struct GenerativeEditorView: View {
                     seekRequest: previewSeekRequest
                 )
             }
-            .aspectRatio(16.0 / 10.0, contentMode: .fit)
+            .aspectRatio(Double(project.exportSettings.width) / Double(max(1, project.exportSettings.height)), contentMode: .fit)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
@@ -920,7 +947,8 @@ struct GenerativeEditorView: View {
                 } label: {
                     Image(systemName: isPreviewPlaying ? "pause.fill" : "play.fill")
                 }
-                .help(isPreviewPlaying ? "Pause" : "Play")
+                .accessibilityLabel(AppLocalization.string(isPreviewPlaying ? "Pause" : "Play"))
+                .help(AppLocalization.string(isPreviewPlaying ? "Pause" : "Play"))
                 .accessibilityIdentifier("preview-play-pause")
 
                 Button {
@@ -930,6 +958,7 @@ struct GenerativeEditorView: View {
                 } label: {
                     Image(systemName: "backward.end.fill")
                 }
+                .accessibilityLabel(AppLocalization.string("First frame"))
                 .help(AppLocalization.string("First frame"))
                 .accessibilityIdentifier("preview-first-frame")
 
@@ -943,6 +972,7 @@ struct GenerativeEditorView: View {
                 } label: {
                     Image(systemName: "forward.end.fill")
                 }
+                .accessibilityLabel(AppLocalization.string("Last frame"))
                 .help(AppLocalization.string("Last frame"))
 
                 Button {
@@ -952,6 +982,12 @@ struct GenerativeEditorView: View {
                 }
                 .accessibilityLabel(AppLocalization.string("Preview Loop Seam"))
                 .help(AppLocalization.string("Preview loop seam"))
+                .accessibilityValue(AppLocalization.string(isSeamPreviewing ? "On" : "Off"))
+                .overlay(alignment: .bottom) {
+                    if isSeamPreviewing {
+                        Capsule().fill(Color.primary).frame(width: 12, height: 2).offset(y: 4)
+                    }
+                }
                 .tint(isSeamPreviewing ? .accentColor : nil)
 
                 Spacer()
@@ -962,7 +998,8 @@ struct GenerativeEditorView: View {
                     } label: {
                         Image(systemName: "folder")
                     }
-                    .help(AppLocalization.string("Show exported video"))
+                    .accessibilityLabel(AppLocalization.string("Show exported video"))
+                .help(AppLocalization.string("Show exported video"))
                 }
             }
             .padding(12)
@@ -1003,9 +1040,9 @@ struct GenerativeEditorView: View {
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("renderer-family")
 
-                HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(AppLocalization.string("Seed"))
-                        .frame(width: 70, alignment: .leading)
+                        .foregroundStyle(.secondary)
                     Text(String(project.seed))
                         .font(.caption.monospacedDigit())
                         .lineLimit(1)
@@ -2113,15 +2150,18 @@ private struct SliderRow: View {
     var fractionLength = 2
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(AppLocalization.string(title))
-                .lineLimit(1)
-                .frame(width: 90, alignment: .leading)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(AppLocalization.string(title))
+                Spacer()
+                Text(value, format: .number.precision(.fractionLength(fractionLength)))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityHidden(true)
             Slider(value: $value, in: range)
-            Text(value, format: .number.precision(.fractionLength(fractionLength)))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: 52, alignment: .trailing)
+                .accessibilityLabel(AppLocalization.string(title))
+                .accessibilityValue(value.formatted(.number.precision(.fractionLength(fractionLength))))
         }
     }
 }
@@ -2143,15 +2183,18 @@ private struct IntSliderRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(AppLocalization.string(title))
-                .lineLimit(1)
-                .frame(width: 90, alignment: .leading)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(AppLocalization.string(title))
+                Spacer()
+                Text(value, format: .number)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityHidden(true)
             Slider(value: doubleValue, in: Double(range.lowerBound)...Double(range.upperBound))
-            Text(value, format: .number)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: 52, alignment: .trailing)
+                .accessibilityLabel(AppLocalization.string(title))
+                .accessibilityValue(value.formatted())
         }
     }
 }

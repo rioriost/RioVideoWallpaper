@@ -12,7 +12,7 @@ struct RioVideoWallpaperSettingsView: View {
     var setWallpaper: (URL) -> Void
     var setWallpaperForDisplay: (URL) -> Void
 
-    @State private var selectedPane: SettingsPane = .general
+    @AppStorage("SelectedSettingsPane") private var selectedPane: SettingsPane = .general
     @State private var assignments: StoredDisplayWallpaperAssignments?
     @State private var selectedDisplayID: String?
     @State private var startsAtLogin = false
@@ -22,14 +22,16 @@ struct RioVideoWallpaperSettingsView: View {
     @StateObject private var editorDraft = GenerativeEditorDraft()
 
     var body: some View {
-        VStack(spacing: 0) {
-            tabBar
-            Divider()
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        TabView(selection: $selectedPane) {
+            ForEach(SettingsPane.allCases) { pane in
+                content(for: pane)
+                    .tabItem { Label(pane.title, systemImage: pane.systemImage) }
+                    .tag(pane)
+            }
         }
-        .frame(minWidth: 1040, minHeight: 720)
-        .background(WindowTitleSetter(title: "RioVideoWallpaper"))
+        .frame(minWidth: selectedPane == .general ? 680 : 980,
+               minHeight: selectedPane == .general ? 560 : 620)
+        .background(WindowTitleSetter(title: selectedPane.title))
         .onAppear {
             refreshDisplayAssignments()
             startsAtLogin = appDelegate.isLoginItemEnabled()
@@ -55,44 +57,9 @@ struct RioVideoWallpaperSettingsView: View {
         }
     }
 
-    private var tabBar: some View {
-        HStack(spacing: 16) {
-            Spacer()
-            ForEach(SettingsPane.allCases) { pane in
-                Button {
-                    selectedPane = pane
-                } label: {
-                    VStack(spacing: 5) {
-                        Image(systemName: pane.systemImage)
-                            .font(.system(size: 20, weight: selectedPane == pane ? .semibold : .regular))
-                        Text(pane.title)
-                            .font(.caption)
-                    }
-                    .frame(width: 104, height: 56)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-                .focusEffectDisabled()
-                .foregroundStyle(selectedPane == pane ? .primary : .secondary)
-                .overlay(alignment: .bottom) {
-                    if selectedPane == pane {
-                        Capsule()
-                            .fill(Color.accentColor)
-                            .frame(width: 44, height: 3)
-                    }
-                }
-            }
-            Spacer()
-        }
-        .padding(.top, 12)
-        .padding(.bottom, 8)
-        .background(.regularMaterial)
-    }
-
     @ViewBuilder
-    private var content: some View {
-        switch selectedPane {
+    private func content(for pane: SettingsPane) -> some View {
+        switch pane {
         case .general:
             GeneralSettingsPane(
                 startsAtLogin: Binding(
@@ -260,75 +227,57 @@ private struct GeneralSettingsPane: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                Toggle(AppLocalization.string("Launch at Login"), isOn: $startsAtLogin)
-                    .toggleStyle(.checkbox)
-
-                if let statusMessage {
-                    Text(statusMessage)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
-                }
-
-                Divider()
-
-                generatedAssetsLocationPanel
-
-                Divider()
-
+        Form {
+            Section(AppLocalization.string("Wallpaper")) {
                 Toggle(AppLocalization.string("Play the same video on all displays"), isOn: $useSameVideo)
-                    .toggleStyle(.checkbox)
-
                 monitorPicker
-
                 selectedVideoPanel
             }
-            .padding(28)
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Section(AppLocalization.string("Startup")) {
+                Toggle(AppLocalization.string("Launch at Login"), isOn: $startsAtLogin)
+                if let statusMessage {
+                    Label(statusMessage, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+
+            Section(AppLocalization.string("History")) {
+                generatedAssetsLocationPanel
+            }
         }
+        .formStyle(.grouped)
+        .frame(maxWidth: 800)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var generatedAssetsLocationPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(AppLocalization.string("History Location:"))
                 .font(.headline)
+            Text(generatedAssetsPath)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .help(generatedAssetsPath)
 
-                Text(generatedAssetsPath)
-                    .font(.body.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-
+            HStack {
+                Button(AppLocalization.string("Choose..."), action: chooseGeneratedAssetsFolder)
+                Button(AppLocalization.string("Reveal"), action: revealGeneratedAssetsFolder)
                 Spacer()
-
-            Button(AppLocalization.string("Choose...")) {
-                chooseGeneratedAssetsFolder()
-            }
-            Button(AppLocalization.string("Reveal")) {
-                revealGeneratedAssetsFolder()
-            }
-            Button(AppLocalization.string("Reset")) {
-                resetGeneratedAssetsFolder()
-            }
-                .disabled(!usesCustomGeneratedAssetsPath)
+                Button(AppLocalization.string("Reset"), action: resetGeneratedAssetsFolder)
+                    .disabled(!usesCustomGeneratedAssetsPath)
             }
 
             if let generatedAssetsStatusMessage {
-                Text(generatedAssetsStatusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.red)
+                Label(generatedAssetsStatusMessage, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
         }
-        .padding(18)
-        .background {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        }
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder
@@ -347,15 +296,17 @@ private struct GeneralSettingsPane: View {
                 HStack(alignment: .top, spacing: 14) {
                     ForEach(Array(screens.enumerated()), id: \.offset) { index, screen in
                         let displayID = DisplayIdentifier.id(for: screen)
-                        DisplayTile(
-                            title: screen.localizedName,
-                            subtitle: "\(Int(screen.frame.width)) x \(Int(screen.frame.height))",
-                            isSelected: selectedDisplayID == displayID,
-                            aspectRatio: displayAspectRatio(for: screen)
-                        )
-                        .onTapGesture {
+                        Button {
                             selectedDisplayID = displayID
+                        } label: {
+                            DisplayTile(
+                                title: screen.localizedName,
+                                subtitle: "\(Int(screen.frame.width)) × \(Int(screen.frame.height))",
+                                isSelected: selectedDisplayID == displayID,
+                                aspectRatio: displayAspectRatio(for: screen)
+                            )
                         }
+                        .buttonStyle(.plain)
                         .accessibilityAddTraits(selectedDisplayID == displayID ? .isSelected : [])
                         .accessibilityLabel(DisplayIdentifier.label(for: screen, index: index))
                     }
@@ -367,10 +318,15 @@ private struct GeneralSettingsPane: View {
 
     private var selectedVideoPanel: some View {
         HStack(spacing: 12) {
-            Text(selectedVideoText)
-                .font(.headline)
-                .lineLimit(2)
-                .truncationMode(.middle)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(AppLocalization.string(useSameVideo ? "Video for All Displays" : "Video for Selected Display"))
+                    .font(.headline)
+                Text(currentVideoURL?.lastPathComponent ?? AppLocalization.string("No video selected"))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .help(currentVideoURL?.path ?? AppLocalization.string("No video selected"))
+            }
 
             Spacer()
 
@@ -383,11 +339,7 @@ private struct GeneralSettingsPane: View {
             }
             .disabled(!useSameVideo && selectedDisplayID == nil)
         }
-        .padding(18)
-        .background {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        }
+        .padding(.vertical, 4)
     }
 
     private var currentVideoURL: URL? {
@@ -396,12 +348,6 @@ private struct GeneralSettingsPane: View {
             return assignments.defaultSelection.url
         }
         return assignments.perDisplaySelections[selectedDisplayID]?.url ?? assignments.defaultSelection.url
-    }
-
-    private var selectedVideoText: String {
-        let label = AppLocalization.string(useSameVideo ? "Video for All Displays" : "Video for Selected Display")
-        let fileName = currentVideoURL?.lastPathComponent ?? AppLocalization.string("No video selected")
-        return "\(label): \(fileName)"
     }
 
     private var representativeAspectRatio: Double {
@@ -439,6 +385,15 @@ private struct DisplayTile: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.35), lineWidth: isSelected ? 3 : 1)
                 }
+                .overlay(alignment: .topTrailing) {
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, Color.accentColor)
+                            .padding(6)
+                    }
+                }
+                .accessibilityHidden(true)
                 .aspectRatio(aspectRatio, contentMode: .fit)
                 .frame(width: 128)
 

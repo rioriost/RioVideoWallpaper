@@ -28,6 +28,7 @@ struct RioVideoWallpaperApp: App {
                 openSettings()
                 NSApp.activate(ignoringOtherApps: true)
             }
+            .keyboardShortcut(",", modifiers: .command)
             Link(
                 AppLocalization.string("Privacy Policy..."),
                 destination: URL(string: "https://raw.githubusercontent.com/rioriost/videowallpaper/main/docs/privacy-policy.md")!
@@ -47,7 +48,7 @@ struct RioVideoWallpaperApp: App {
                 setWallpaperForDisplay: appDelegate.setGeneratedWallpaperForDisplay
             )
         }
-        .defaultSize(width: 1240, height: 820)
+        .defaultSize(width: 1000, height: 720)
         .windowResizability(.contentMinSize)
     }
 
@@ -156,7 +157,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         window.title = "RioVideoWallpaper"
         window.contentViewController = hostingController
-        window.minSize = NSSize(width: 940, height: 620)
+        window.contentMinSize = NSSize(width: 980, height: 600)
+        window.setContentSize(NSSize(width: 1180, height: 760))
         window.center()
         window.isReleasedWhenClosed = false
         window.delegate = self

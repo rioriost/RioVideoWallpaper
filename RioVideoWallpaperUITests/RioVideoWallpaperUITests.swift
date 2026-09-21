@@ -56,6 +56,44 @@ final class RioVideoWallpaperUITests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsNavigationPreservesEditorDraftAndAccessibleControls() throws {
+        let app = try makeApplication()
+        app.launch()
+        app.typeKey(",", modifierFlags: .command)
+
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        settings.toolbars.buttons["General"].click()
+        XCTAssertTrue(app.windows["General"].waitForExistence(timeout: 5))
+        let settingsImage = XCTAttachment(screenshot: settings.screenshot())
+        settingsImage.name = "General settings"
+        settingsImage.lifetime = .keepAlways
+        add(settingsImage)
+        settings.toolbars.buttons["Video Generation"].click()
+        let generation = app.windows["Video Generation"]
+        XCTAssertTrue(generation.waitForExistence(timeout: 5))
+        XCTAssertTrue(generation.sliders["Width"].exists)
+        XCTAssertTrue(generation.sliders["Speed"].exists)
+        XCTAssertTrue(generation.buttons["preview-first-frame"].isHittable)
+
+        let renderer = generation.popUpButtons["renderer-family"]
+        renderer.click()
+        app.menuItems["Orbital"].click()
+        generation.toolbars.buttons["General"].click()
+        settings.toolbars.buttons["Video Generation"].click()
+        XCTAssertEqual(renderer.value as? String, "Orbital")
+
+        generation.buttons["preview-first-frame"].click()
+        XCTAssertEqual(generation.buttons["preview-play-pause"].label, "Play")
+        generation.buttons["preview-play-pause"].click()
+        XCTAssertEqual(generation.buttons["preview-play-pause"].label, "Pause")
+        let editorImage = XCTAttachment(screenshot: generation.screenshot())
+        editorImage.name = "Video generation"
+        editorImage.lifetime = .keepAlways
+        add(editorImage)
+    }
+
+    @MainActor
     func testLaunchSmoke() throws {
         let app = try makeApplication()
         app.launch()

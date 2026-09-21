@@ -159,3 +159,12 @@
 "OK" = "OK";
 "This video may be expensive to play" = "動画の負荷が高い可能性があります";
 "Privacy Policy..." = "プライバシーポリシー...";
+
+"Wallpaper" = "壁紙";
+"Startup" = "起動";
+"Preview" = "プレビュー";
+"Play" = "再生";
+"Pause" = "一時停止";
+"On" = "オン";
+"Off" = "オフ";
+"Export a video to set it as your wallpaper." = "動画を書き出すと、壁紙に設定できます。";
