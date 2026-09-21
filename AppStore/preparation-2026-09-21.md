@@ -1,5 +1,7 @@
 # App Store Review Preflight / 1.2.2 リリース準備
 
+> 更新: サインイン後に配布署名・アップロード・ビルド選択・日英素材の設定が完了した。最新状態は [upload-2026-09-21.md](upload-2026-09-21.md) を参照。以下は初回の署名復旧前の監査記録。
+
 - App / platform: RioVideoWallpaper / macOS
 - Version / build: **1.2.2 / 6**（更新）
 - Bundle ID: `st.rio.VideoWallpaper`、App Store Connect ID: `6783258615`
