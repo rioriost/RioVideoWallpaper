@@ -62,6 +62,17 @@ brew install --cask rioriost/cask/riovideowallpaper
 
 Xcode Instruments の Time Profiler で CPU 使用量を確認できます。良好な状態では、処理時間の多くは AVFoundation/CoreMedia などのシステム側に出て、`RioVideoWallpaper` 自体の self time は小さくなります。1画面と複数画面を比較して、共有再生パイプラインで負荷が増えにくいことを確認してください。CPU time が十分低い場合は、独自レンダラを検討する前に Energy Log や GPU/Metal profiling で確認します。
 
+## テスト
+
+Xcode と Metal Toolchain を導入した Mac で、単体テストと UI テストを実行できます。
+
+```sh
+make test
+```
+
+Metal のコンパイル時にツールチェーン未導入のエラーが出る場合は、`xcodebuild -downloadComponent MetalToolchain` で導入してください。
+テストにはローカルのアドホック署名を使用するため、開発用証明書は不要です。初回の動画選択ダイアログを抑制し、ラベルを照合する UI テストでは Mac の優先言語にかかわらずアプリを英語で起動します。
+
 ## ライセンス
 
 MIT License

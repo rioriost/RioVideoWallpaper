@@ -41,8 +41,8 @@ final class RioVideoWallpaperUITests: XCTestCase {
 
         let window = app.windows["RioVideoWallpaper"]
         XCTAssertTrue(window.waitForExistence(timeout: 5))
-        XCTAssertTrue(window.buttons["Export..."].exists)
-        XCTAssertTrue(window.buttons["Set as Wallpaper"].exists)
+        XCTAssertTrue(window.buttons["Export"].exists)
+        XCTAssertTrue(window.buttons["Set to All Displays"].exists)
         XCTAssertTrue(window.buttons["Set on Display..."].exists)
         XCTAssertTrue(window.buttons["Remove orphaned generated assets"].exists)
         XCTAssertTrue(window.buttons["Pause"].exists || window.buttons["Play"].exists)
@@ -50,8 +50,8 @@ final class RioVideoWallpaperUITests: XCTestCase {
         XCTAssertTrue(window.buttons["Go To Start"].exists)
         XCTAssertTrue(window.buttons["Preview Loop Seam"].exists)
         XCTAssertTrue(window.staticTexts["Renderer"].exists)
-        XCTAssertTrue(window.staticTexts["Provider"].exists)
-        XCTAssertTrue(window.staticTexts["Intent"].exists)
+        XCTAssertTrue(window.staticTexts["Export Options"].exists)
+        XCTAssertTrue(window.staticTexts["Renderer Options"].exists)
     }
 
     @MainActor
@@ -65,6 +65,7 @@ final class RioVideoWallpaperUITests: XCTestCase {
 
     private func makeApplication() -> XCUIApplication {
         let app = XCUIApplication()
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launchEnvironment["VIDEO_WALLPAPER_UI_TESTING"] = "1"
         runningApplication = app
         return app

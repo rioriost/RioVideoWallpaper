@@ -17,13 +17,16 @@ build:
 		build
 
 test:
-	xcodebuild \
+	TEST_RUNNER_VIDEO_WALLPAPER_UI_TESTING=1 xcodebuild \
 		-project $(PROJECT) \
 		-scheme $(SCHEME) \
 		-destination 'platform=macOS' \
 		-derivedDataPath $(DERIVED_DATA) \
-		CODE_SIGNING_ALLOWED=NO \
-		CODE_SIGNING_REQUIRED=NO \
+		CODE_SIGNING_ALLOWED=YES \
+		CODE_SIGNING_REQUIRED=YES \
+		CODE_SIGN_STYLE=Manual \
+		CODE_SIGN_IDENTITY=- \
+		DEVELOPMENT_TEAM= \
 		test
 
 release:
