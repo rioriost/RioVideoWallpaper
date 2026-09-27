@@ -19,6 +19,7 @@
 
 ## 動作環境
 
+- Apple Silicon 搭載 Mac（arm64/aarch64 のみ。Intel Mac は非対応）
 - macOS
 
 ## インストール

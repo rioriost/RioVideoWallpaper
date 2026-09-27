@@ -20,7 +20,7 @@ test:
 	TEST_RUNNER_VIDEO_WALLPAPER_UI_TESTING=1 xcodebuild \
 		-project $(PROJECT) \
 		-scheme $(SCHEME) \
-		-destination 'platform=macOS' \
+		-destination 'platform=macOS,arch=arm64' \
 		-derivedDataPath $(DERIVED_DATA) \
 		CODE_SIGNING_ALLOWED=YES \
 		CODE_SIGNING_REQUIRED=YES \

@@ -16,6 +16,7 @@ RioVideoWallpaper is a lightweight macOS menu bar app that lets you play a video
 
 ## Requirements
 
+- Apple Silicon Mac (arm64/aarch64 only; Intel Macs are not supported)
 - macOS 15 or later
 
 ## Install
